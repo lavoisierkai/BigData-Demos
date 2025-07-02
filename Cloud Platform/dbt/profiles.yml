@@ -1,0 +1,83 @@
+# profiles.yml
+# This file configures database connections for different environments
+
+ecommerce_analytics:
+  outputs:
+    
+    # Development environment - local database for testing
+    dev:
+      type: postgres
+      host: localhost
+      user: "{{ env_var('DBT_DEV_USER', 'dbt_user') }}"
+      password: "{{ env_var('DBT_DEV_PASSWORD', 'password') }}"
+      port: 5432
+      dbname: ecommerce_dev
+      schema: dbt_dev
+      threads: 4
+      keepalives_idle: 0 # default 0, indicating the system default
+      search_path: "dbt_dev"
+    
+    # Staging environment - cloud database for testing
+    staging:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PASSWORD') }}"
+      role: DBT_STAGING_ROLE
+      database: ECOMMERCE_STAGING
+      warehouse: DBT_STAGING_WH
+      schema: ANALYTICS
+      threads: 8
+      client_session_keep_alive: False
+      query_tag: dbt-staging
+    
+    # Production environment - production data warehouse
+    prod:
+      type: snowflake
+      account: "{{ env_var('SNOWFLAKE_ACCOUNT') }}"
+      user: "{{ env_var('SNOWFLAKE_PROD_USER') }}"
+      password: "{{ env_var('SNOWFLAKE_PROD_PASSWORD') }}"
+      role: DBT_PROD_ROLE
+      database: ECOMMERCE_PROD
+      warehouse: DBT_PROD_WH
+      schema: ANALYTICS
+      threads: 16
+      client_session_keep_alive: False
+      query_tag: dbt-production
+    
+    # BigQuery environment - for Google Cloud deployments
+    bigquery:
+      type: bigquery
+      method: service-account
+      project: "{{ env_var('GCP_PROJECT_ID') }}"
+      dataset: ecommerce_analytics
+      threads: 8
+      keyfile: "{{ env_var('GOOGLE_APPLICATION_CREDENTIALS') }}"
+      location: US
+      priority: interactive
+      retries: 1
+      
+    # Databricks environment - for Databricks deployments
+    databricks:
+      type: databricks
+      catalog: ecommerce
+      schema: analytics
+      host: "{{ env_var('DATABRICKS_HOST') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN') }}"
+      threads: 8
+      
+    # Redshift environment - for AWS Redshift
+    redshift:
+      type: redshift
+      host: "{{ env_var('REDSHIFT_HOST') }}"
+      user: "{{ env_var('REDSHIFT_USER') }}"
+      password: "{{ env_var('REDSHIFT_PASSWORD') }}"
+      port: 5439
+      dbname: ecommerce
+      schema: analytics
+      threads: 8
+      keepalives_idle: 0
+      
+  # Default target environment
+  target: dev

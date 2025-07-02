@@ -89,11 +89,17 @@ BigData-Demos/
 │   │   ├── emr-jobs/              # Big data processing
 │   │   └── sample-data/           # Test datasets
 │   │
-│   └── 🔴 databricks/             # Databricks Analytics Platform
-│       ├── 01_data_ingestion_bronze.py
-│       ├── 02_data_quality_silver.py
-│       ├── 03_business_intelligence_gold.py
-│       └── advanced-ml-notebooks/
+│   ├── 🔴 databricks/             # Databricks Analytics Platform
+│   │   ├── 01_data_ingestion_bronze.py
+│   │   ├── 02_data_quality_silver.py
+│   │   ├── 03_business_intelligence_gold.py
+│   │   └── advanced-ml-notebooks/
+│   │
+│   └── 🟨 dbt/                    # dbt Data Transformation
+│       ├── models/                # Data models (staging, intermediate, marts)
+│       ├── macros/                # Reusable SQL functions
+│       ├── tests/                 # Data quality tests
+│       └── docs/                  # Documentation and lineage
 │
 ├── 📂 DevOps Solution/
 │   ├── 🔵 Azure/                  # Azure Data Platform
@@ -336,21 +342,3 @@ This project is licensed under the MIT License - see the [LICENSE](LICENSE) file
 - [Data Engineering Community](https://www.reddit.com/r/dataengineering/)
 - [Apache Spark User Mailing List](https://spark.apache.org/community.html)
 - [Databricks Community](https://community.databricks.com/)
-
-## 🌟 Acknowledgments
-
-This repository was created to demonstrate modern data engineering and analytics practices. Special thanks to the open-source community and cloud platform providers for their excellent documentation and tools.
-
----
-
-**Built with ❤️ for the data community**
-
-*For questions, feedback, or collaboration opportunities, please open an issue or reach out via LinkedIn.*
-
-### 📊 Project Statistics
-
-![Repository Size](https://img.shields.io/github/repo-size/username/BigData-Demos)
-![Last Commit](https://img.shields.io/github/last-commit/username/BigData-Demos)
-![Contributors](https://img.shields.io/github/contributors/username/BigData-Demos)
-![Issues](https://img.shields.io/github/issues/username/BigData-Demos)
-![Pull Requests](https://img.shields.io/github/issues-pr/username/BigData-Demos)

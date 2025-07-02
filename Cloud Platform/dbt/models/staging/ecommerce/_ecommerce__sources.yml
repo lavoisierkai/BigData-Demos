@@ -1,0 +1,399 @@
+# Source definitions for e-commerce data
+
+version: 2
+
+sources:
+  - name: ecommerce_raw
+    description: Raw e-commerce data from operational systems
+    database: ecommerce
+    schema: raw_data
+    
+    # Freshness checks for all tables in this source
+    freshness:
+      warn_after: {count: 12, period: hour}
+      error_after: {count: 24, period: hour}
+    
+    # Loader information
+    loader: airbyte # or fivetran, stitch, etc.
+    loaded_at_field: _extracted_at
+    
+    tables:
+      - name: customers
+        description: Customer master data from CRM system
+        columns:
+          - name: customer_id
+            description: Unique identifier for customer
+            tests:
+              - unique
+              - not_null
+          - name: email
+            description: Customer email address
+            tests:
+              - unique
+              - not_null
+          - name: first_name
+            description: Customer first name
+          - name: last_name
+            description: Customer last name
+          - name: phone
+            description: Customer phone number
+          - name: created_at
+            description: Customer registration timestamp
+            tests:
+              - not_null
+          - name: updated_at
+            description: Last update timestamp
+          - name: status
+            description: Customer account status
+            tests:
+              - accepted_values:
+                  values: ['active', 'inactive', 'suspended', 'closed']
+          - name: customer_segment
+            description: Marketing segment classification
+            tests:
+              - accepted_values:
+                  values: ['premium', 'standard', 'basic', 'trial']
+        
+        # Data quality tests at table level
+        tests:
+          - dbt_utils.unique_combination_of_columns:
+              combination_of_columns:
+                - customer_id
+                - email
+
+      - name: orders
+        description: Transaction data from order management system
+        columns:
+          - name: order_id
+            description: Unique identifier for order
+            tests:
+              - unique
+              - not_null
+          - name: customer_id
+            description: Reference to customer
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'customers')
+                  field: customer_id
+          - name: order_date
+            description: Order placement timestamp
+            tests:
+              - not_null
+          - name: order_status
+            description: Current order status
+            tests:
+              - accepted_values:
+                  values: ['pending', 'confirmed', 'shipped', 'delivered', 'cancelled', 'returned']
+          - name: total_amount
+            description: Total order amount in USD
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 100000
+          - name: currency_code
+            description: Currency code for the order
+            tests:
+              - accepted_values:
+                  values: ['USD', 'EUR', 'GBP', 'CAD']
+          - name: payment_method
+            description: Payment method used
+          - name: shipping_address_id
+            description: Reference to shipping address
+          - name: billing_address_id
+            description: Reference to billing address
+          - name: created_at
+            description: Record creation timestamp
+          - name: updated_at
+            description: Last update timestamp
+
+      - name: order_items
+        description: Individual line items within orders
+        columns:
+          - name: order_item_id
+            description: Unique identifier for order item
+            tests:
+              - unique
+              - not_null
+          - name: order_id
+            description: Reference to parent order
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'orders')
+                  field: order_id
+          - name: product_id
+            description: Reference to product
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'products')
+                  field: product_id
+          - name: quantity
+            description: Quantity ordered
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 1
+                  max_value: 1000
+          - name: unit_price
+            description: Price per unit
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 10000
+          - name: discount_amount
+            description: Discount applied to line item
+            tests:
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 10000
+          - name: created_at
+            description: Record creation timestamp
+          - name: updated_at
+            description: Last update timestamp
+
+      - name: products
+        description: Product catalog data
+        columns:
+          - name: product_id
+            description: Unique identifier for product
+            tests:
+              - unique
+              - not_null
+          - name: product_name
+            description: Product display name
+            tests:
+              - not_null
+          - name: sku
+            description: Stock keeping unit
+            tests:
+              - unique
+              - not_null
+          - name: category_id
+            description: Reference to product category
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'categories')
+                  field: category_id
+          - name: brand
+            description: Product brand
+          - name: price
+            description: Current product price
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 50000
+          - name: cost
+            description: Product cost basis
+            tests:
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 50000
+          - name: weight
+            description: Product weight in grams
+          - name: dimensions
+            description: Product dimensions (JSON)
+          - name: status
+            description: Product availability status
+            tests:
+              - accepted_values:
+                  values: ['active', 'inactive', 'discontinued']
+          - name: created_at
+            description: Product creation timestamp
+          - name: updated_at
+            description: Last update timestamp
+
+      - name: categories
+        description: Product category hierarchy
+        columns:
+          - name: category_id
+            description: Unique identifier for category
+            tests:
+              - unique
+              - not_null
+          - name: category_name
+            description: Category display name
+            tests:
+              - not_null
+          - name: parent_category_id
+            description: Reference to parent category for hierarchy
+          - name: category_path
+            description: Full category path
+          - name: description
+            description: Category description
+          - name: created_at
+            description: Category creation timestamp
+          - name: updated_at
+            description: Last update timestamp
+
+      - name: addresses
+        description: Customer addresses (shipping and billing)
+        columns:
+          - name: address_id
+            description: Unique identifier for address
+            tests:
+              - unique
+              - not_null
+          - name: customer_id
+            description: Reference to customer
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'customers')
+                  field: customer_id
+          - name: address_type
+            description: Type of address
+            tests:
+              - accepted_values:
+                  values: ['shipping', 'billing', 'both']
+          - name: address_line_1
+            description: Primary address line
+            tests:
+              - not_null
+          - name: address_line_2
+            description: Secondary address line
+          - name: city
+            description: City name
+            tests:
+              - not_null
+          - name: state_province
+            description: State or province
+          - name: postal_code
+            description: Postal/ZIP code
+          - name: country_code
+            description: ISO country code
+            tests:
+              - not_null
+          - name: is_default
+            description: Whether this is the default address
+          - name: created_at
+            description: Address creation timestamp
+          - name: updated_at
+            description: Last update timestamp
+
+      - name: inventory
+        description: Product inventory levels
+        freshness:
+          warn_after: {count: 1, period: hour}
+          error_after: {count: 6, period: hour}
+        columns:
+          - name: inventory_id
+            description: Unique identifier for inventory record
+            tests:
+              - unique
+              - not_null
+          - name: product_id
+            description: Reference to product
+            tests:
+              - not_null
+              - relationships:
+                  to: source('ecommerce_raw', 'products')
+                  field: product_id
+          - name: warehouse_location
+            description: Warehouse or store location
+            tests:
+              - not_null
+          - name: quantity_available
+            description: Available inventory quantity
+            tests:
+              - not_null
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 100000
+          - name: quantity_reserved
+            description: Reserved inventory quantity
+            tests:
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 100000
+          - name: reorder_point
+            description: Inventory reorder threshold
+          - name: last_updated
+            description: Last inventory update timestamp
+            tests:
+              - not_null
+
+  - name: marketing_campaigns
+    description: Marketing campaign data from campaign management system
+    database: marketing
+    schema: campaigns
+    
+    tables:
+      - name: campaigns
+        description: Marketing campaign master data
+        columns:
+          - name: campaign_id
+            description: Unique identifier for campaign
+            tests:
+              - unique
+              - not_null
+          - name: campaign_name
+            description: Campaign display name
+            tests:
+              - not_null
+          - name: campaign_type
+            description: Type of marketing campaign
+            tests:
+              - accepted_values:
+                  values: ['email', 'social', 'search', 'display', 'affiliate']
+          - name: start_date
+            description: Campaign start date
+            tests:
+              - not_null
+          - name: end_date
+            description: Campaign end date
+          - name: budget
+            description: Campaign budget
+            tests:
+              - dbt_expectations.expect_column_values_to_be_between:
+                  min_value: 0
+                  max_value: 1000000
+          - name: target_audience
+            description: Target customer segment
+          - name: status
+            description: Campaign status
+            tests:
+              - accepted_values:
+                  values: ['draft', 'active', 'paused', 'completed', 'cancelled']
+
+      - name: campaign_interactions
+        description: Customer interactions with marketing campaigns
+        columns:
+          - name: interaction_id
+            description: Unique identifier for interaction
+            tests:
+              - unique
+              - not_null
+          - name: campaign_id
+            description: Reference to campaign
+            tests:
+              - not_null
+              - relationships:
+                  to: source('marketing_campaigns', 'campaigns')
+                  field: campaign_id
+          - name: customer_id
+            description: Reference to customer
+            tests:
+              - relationships:
+                  to: source('ecommerce_raw', 'customers')
+                  field: customer_id
+          - name: interaction_type
+            description: Type of interaction
+            tests:
+              - accepted_values:
+                  values: ['impression', 'click', 'conversion', 'unsubscribe']
+          - name: interaction_timestamp
+            description: When the interaction occurred
+            tests:
+              - not_null
+          - name: channel
+            description: Marketing channel
+          - name: device_type
+            description: Device used for interaction
+          - name: location
+            description: Geographic location of interaction

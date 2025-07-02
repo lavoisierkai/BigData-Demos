@@ -1,0 +1,206 @@
+# Core marts model documentation and tests
+
+version: 2
+
+models:
+  - name: dim_customers
+    description: "Customer dimension table with comprehensive customer attributes and calculated metrics"
+    
+    columns:
+      - name: customer_key
+        description: "Surrogate key for customer dimension"
+        tests:
+          - unique
+          - not_null
+          
+      - name: customer_id
+        description: "Natural key from source system"
+        tests:
+          - unique
+          - not_null
+          
+      - name: email
+        description: "Customer email address"
+        tests:
+          - valid_email
+          
+      - name: total_lifetime_value
+        description: "Total amount spent by customer across all orders"
+        tests:
+          - not_null
+          - reasonable_values:
+              min_value: 0
+              max_value: 100000
+              
+      - name: avg_order_value
+        description: "Average order value for this customer"
+        tests:
+          - reasonable_values:
+              min_value: 0
+              max_value: 10000
+              
+      - name: recency_score
+        description: "RFM recency score (1-5)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+              
+      - name: frequency_score
+        description: "RFM frequency score (1-5)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+              
+      - name: monetary_score
+        description: "RFM monetary score (1-5)"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [1, 2, 3, 4, 5]
+              
+      - name: rfm_segment
+        description: "Customer segment based on RFM analysis"
+        tests:
+          - accepted_values:
+              values: 
+                - 'Champions'
+                - 'Loyal Customers'
+                - 'Potential Loyalists'
+                - 'New Customers'
+                - 'Promising'
+                - 'Need Attention'
+                - 'About to Sleep'
+                - 'At Risk'
+                - 'Cannot Lose Them'
+                - 'Hibernating'
+                - 'Lost'
+                
+      - name: completion_rate
+        description: "Rate of order completion (0-1)"
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+              max_value: 1
+              
+      - name: cancellation_rate
+        description: "Rate of order cancellation (0-1)"
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+              max_value: 1
+
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          min_value: 1
+          max_value: 1000000
+      - dbt_expectations.expect_table_columns_to_match_ordered_list:
+          column_list: 
+            - customer_key
+            - customer_id
+            - email
+            - full_name
+
+  - name: fact_sales
+    description: "Sales fact table containing transactional data with dimensional references"
+    
+    columns:
+      - name: sale_key
+        description: "Surrogate key for sales fact"
+        tests:
+          - unique
+          - not_null
+          
+      - name: order_id
+        description: "Natural key from source order system"
+        tests:
+          - not_null
+          
+      - name: order_item_id
+        description: "Natural key from source order item system"
+        tests:
+          - not_null
+          
+      - name: customer_key
+        description: "Foreign key to customer dimension"
+        tests:
+          - not_null
+          - relationships:
+              to: ref('dim_customers')
+              field: customer_key
+              
+      - name: product_key
+        description: "Foreign key to product dimension"
+        tests:
+          - not_null
+          
+      - name: order_date
+        description: "Date when order was placed"
+        tests:
+          - not_null
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: "'2020-01-01'"
+              max_value: "current_date() + interval 1 day"
+              
+      - name: quantity
+        description: "Quantity of items ordered"
+        tests:
+          - not_null
+          - reasonable_values:
+              min_value: 1
+              max_value: 1000
+              
+      - name: unit_price
+        description: "Price per unit"
+        tests:
+          - not_null
+          - reasonable_values:
+              min_value: 0
+              max_value: 10000
+              
+      - name: net_item_amount
+        description: "Net amount after discounts"
+        tests:
+          - not_null
+          - reasonable_values:
+              min_value: 0
+              max_value: 100000
+              
+      - name: discount_percentage
+        description: "Discount percentage applied (0-1)"
+        tests:
+          - dbt_expectations.expect_column_values_to_be_between:
+              min_value: 0
+              max_value: 1
+              
+      - name: is_completed_order
+        description: "Flag indicating if order was completed"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+              
+      - name: is_cancelled_order
+        description: "Flag indicating if order was cancelled"
+        tests:
+          - not_null
+          - accepted_values:
+              values: [true, false]
+
+    tests:
+      - dbt_expectations.expect_table_row_count_to_be_between:
+          min_value: 1
+          max_value: 10000000
+      - dbt_utils.unique_combination_of_columns:
+          combination_of_columns:
+            - order_id
+            - order_item_id
+      # Test that completed and cancelled orders are mutually exclusive
+      - dbt_expectations.expect_compound_columns_to_be_unique:
+          combination_of_columns:
+            - order_id
+            - order_item_id
+          ignore_row_if: "is_completed_order = true and is_cancelled_order = true"

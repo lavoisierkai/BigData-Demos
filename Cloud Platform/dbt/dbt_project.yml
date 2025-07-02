@@ -1,0 +1,131 @@
+name: 'ecommerce_analytics'
+version: '1.0.0'
+config-version: 2
+
+# This setting configures which "profile" dbt uses for this project.
+profile: 'ecommerce_analytics'
+
+# These configurations specify where dbt should look for different types of files.
+model-paths: ["models"]
+analysis-paths: ["analyses"]
+test-paths: ["tests"]
+seed-paths: ["seeds"]
+macro-paths: ["macros"]
+snapshot-paths: ["snapshots"]
+
+target-path: "target"  # directory which will store compiled SQL files
+clean-targets:         # directories to be removed by `dbt clean`
+  - "target"
+  - "dbt_packages"
+
+# Configuring models
+# Full documentation: https://docs.getdbt.com/docs/configuring-models
+
+models:
+  ecommerce_analytics:
+    # Config indicated by + and applies to all files under models/staging/
+    staging:
+      +materialized: view
+      +docs:
+        node_color: "#F8C471"
+    
+    # Config for intermediate models
+    intermediate:
+      +materialized: view
+      +docs:
+        node_color: "#85C1E9"
+    
+    # Config for marts (dimensional models)
+    marts:
+      +materialized: table
+      +docs:
+        node_color: "#82E0AA"
+      
+      # Specific configs for different mart areas
+      core:
+        +materialized: table
+        +pre-hook: "{{ logging.log_model_start_time() }}"
+        +post-hook: "{{ logging.log_model_end_time() }}"
+      
+      finance:
+        +materialized: table
+        +tags: ["finance", "pii"]
+      
+      marketing:
+        +materialized: table
+        +tags: ["marketing"]
+
+# Configure snapshots
+snapshots:
+  ecommerce_analytics:
+    +target_schema: snapshots
+    +strategy: timestamp
+    +updated_at: updated_at
+
+# Configure seeds
+seeds:
+  ecommerce_analytics:
+    +column_types:
+      id: varchar(50)
+      created_at: timestamp
+    +docs:
+      node_color: "#F7DC6F"
+
+# Configure tests
+tests:
+  +store_failures: true
+
+# Variables that can be referenced in models
+vars:
+  # Date range variables for incremental models
+  start_date: '2020-01-01'
+  
+  # Timezone for date conversions
+  timezone: 'UTC'
+  
+  # Business logic variables
+  high_value_customer_threshold: 1000
+  churn_prediction_days: 90
+  
+  # Data quality thresholds
+  test_severity: warn
+  max_null_percentage: 0.05
+  
+  # Feature flags
+  enable_advanced_analytics: true
+  enable_ml_features: false
+
+# Configure documentation
+docs:
+  title: "E-commerce Analytics Data Warehouse"
+  description: |
+    This dbt project transforms raw e-commerce data into analytics-ready datasets.
+    
+    ## Architecture
+    - **Staging**: Raw data cleaning and standardization
+    - **Intermediate**: Business logic and calculations
+    - **Marts**: Final dimensional models for analytics
+    
+    ## Data Sources
+    - Raw transactions from operational databases
+    - Customer data from CRM systems
+    - Product catalog from inventory systems
+    - Marketing campaign data
+  
+  meta:
+    owner: "Data Engineering Team"
+    contact: "data-team@company.com"
+    
+# Configure on-run-start and on-run-end hooks
+on-run-start:
+  - "{{ create_audit_table() }}"
+  - "{{ log_run_start() }}"
+
+on-run-end:
+  - "{{ log_run_end() }}"
+  - "{{ cleanup_temp_tables() }}"
+
+# Configure dispatch for cross-database compatibility
+dispatch:
+  - macro_namespace: dbt_utils
+    search_order: ['dbt_utils']
