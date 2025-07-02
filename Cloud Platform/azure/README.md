@@ -9,8 +9,8 @@ Azure Data Platform Ecosystem
 ┌─────────────────────────────────────────────────────────────────┐
 │                     Data Ingestion Layer                        │
 ├─────────────────────────────────────────────────────────────────┤
-│ Event Hubs → Stream Analytics → Data Factory → Logic Apps      │
-│ IoT Hub    → Functions        → Storage       → API Management │
+│ Event Hubs → Data Factory → Logic Apps → API Management        │
+│ IoT Hub    → Functions    → Storage     → Service Bus          │
 └─────────────────────────────────────────────────────────────────┘
                                  ↓
 ┌─────────────────────────────────────────────────────────────────┐
@@ -24,9 +24,9 @@ Azure Data Platform Ecosystem
 ┌─────────────────────────────────────────────────────────────────┐
 │                   Processing & Analytics Layer                   │
 ├─────────────────────────────────────────────────────────────────┤
-│ Synapse Analytics | Databricks | HDInsight                     │
-│ Azure ML | Cognitive Services | Bot Framework                   │
-│ Power BI | Analysis Services | Purview                         │
+│ Databricks | HDInsight | Azure ML | Data Factory Mapping      │
+│ Cognitive Services | Bot Framework | Analysis Services         │
+│ Power BI | Purview | Azure Functions | Logic Apps              │
 └─────────────────────────────────────────────────────────────────┘
 ```
 
@@ -45,28 +45,12 @@ azure/
 │   ├── linked-services/              # Connection configurations
 │   ├── triggers/                     # Pipeline triggers
 │   └── monitoring/                   # Pipeline monitoring & alerts
-├── synapse-analytics/                 # Azure Synapse Analytics
-│   ├── README.md                     # Synapse implementation guide
-│   ├── sql-pools/                    # SQL pool configurations
-│   ├── spark-pools/                  # Spark pool configurations
-│   ├── notebooks/                    # Jupyter/Scala notebooks
-│   ├── pipelines/                    # Synapse pipelines
-│   ├── data-flows/                   # Data transformation flows
-│   └── security/                     # Security configurations
 ├── data-lake-storage/                 # Azure Data Lake Storage Gen2
 │   ├── README.md                     # ADLS implementation guide
 │   ├── hierarchical-namespace/       # HNS configurations
 │   ├── access-control/               # ACL and RBAC setup
 │   ├── lifecycle-management/         # Data lifecycle policies
 │   └── integration/                  # Service integrations
-├── stream-analytics/                  # Azure Stream Analytics
-│   ├── README.md                     # Stream Analytics guide
-│   ├── jobs/                         # Stream processing jobs
-│   │   ├── iot-telemetry/           # IoT data processing
-│   │   ├── click-stream/            # Web analytics
-│   │   └── fraud-detection/         # Real-time fraud detection
-│   ├── functions/                    # Stream functions (UDF)
-│   └── outputs/                      # Output configurations
 ├── event-hubs/                       # Azure Event Hubs
 │   ├── README.md                     # Event Hubs guide
 │   ├── namespaces/                   # Event Hub namespaces
@@ -155,18 +139,18 @@ azure/
 ## Key Solutions Demonstrated
 
 ### 1. Real-Time Analytics Platform
-**Technologies**: Event Hubs + Stream Analytics + Cosmos DB + Power BI
+**Technologies**: Event Hubs + Azure Functions + Cosmos DB + Power BI
 - High-throughput event ingestion (millions of events/second)
-- Real-time stream processing with temporal windows
+- Serverless event processing with automatic scaling
 - Low-latency NoSQL storage with global distribution
 - Real-time dashboards and alerting
 
 ### 2. Modern Data Warehouse
-**Technologies**: Data Factory + Synapse Analytics + Data Lake Storage
-- ELT pipelines with incremental loading
-- Massively parallel processing (MPP) architecture
-- Columnar storage with dynamic scaling
-- Advanced analytics with T-SQL and Spark
+**Technologies**: Data Factory + SQL Database + Data Lake Storage
+- ETL/ELT pipelines with incremental loading
+- Scalable relational database with elastic pools
+- Hierarchical namespace storage optimization
+- Advanced analytics integration with Power BI
 
 ### 3. Data Lakehouse Architecture
 **Technologies**: Data Lake Storage Gen2 + Databricks + Delta Lake
@@ -200,21 +184,21 @@ azure/
 
 ### 1. Lambda Architecture
 ```
-Batch Layer:    Data Factory → Data Lake → Synapse Analytics
-Speed Layer:    Event Hubs → Stream Analytics → Cosmos DB
+Batch Layer:    Data Factory → Data Lake → SQL Database
+Speed Layer:    Event Hubs → Azure Functions → Cosmos DB
 Serving Layer:  Power BI + API Management + Web Apps
 ```
 
 ### 2. Kappa Architecture
 ```
-Unified Stream: Event Hubs → Stream Analytics → Data Lake + Real-time Stores
+Unified Stream: Event Hubs → Azure Functions → Data Lake + Real-time Stores
 ```
 
 ### 3. Medallion Architecture
 ```
 Bronze Layer: Raw data ingestion (Data Factory + Data Lake)
-Silver Layer: Cleaned and validated data (Synapse + Databricks)
-Gold Layer:   Business-ready aggregated data (Analytics + ML)
+Silver Layer: Cleaned and validated data (Databricks + Data Factory)
+Gold Layer:   Business-ready aggregated data (Power BI + Azure ML)
 ```
 
 ### 4. Microservices Data Architecture
@@ -249,7 +233,7 @@ Analytics:       Stream Analytics + Azure ML + Cognitive Services
 ### Horizontal Scaling
 - **Event Hubs**: Partition-based scaling (up to 32 partitions)
 - **Cosmos DB**: Multi-region writes with 99.999% availability
-- **Synapse**: Dynamic scaling from 0 to 3000+ DWUs
+- **SQL Database**: Elastic pools with automatic scaling
 - **Functions**: Consumption plan with automatic scaling
 
 ### Performance Optimization
@@ -274,9 +258,8 @@ az account set --subscription "your-subscription-id"
 
 # Required Azure CLI extensions
 az extension add --name datafactory
-az extension add --name synapse
 az extension add --name ml
-az extension add --name stream-analytics
+az extension add --name eventgrid
 ```
 
 ### Quick Start Deployment
@@ -296,13 +279,13 @@ az deployment group create \
 
 # Deploy data pipelines
 ./scripts/deploy-data-factory.sh
-./scripts/deploy-synapse.sh
+./scripts/setup-sql-database.sh
 ```
 
 ### Learning Path Recommendations
 
 1. **Beginner**: Start with Data Factory basic pipelines
-2. **Intermediate**: Implement Synapse Analytics workspace
+2. **Intermediate**: Implement Event Hubs and Functions integration
 3. **Advanced**: Build end-to-end MLOps pipeline
 4. **Expert**: Implement multi-region disaster recovery
 
@@ -362,9 +345,9 @@ az deployment group create \
 
 ### Documentation Links
 - [Azure Data Factory Documentation](https://docs.microsoft.com/azure/data-factory/)
-- [Azure Synapse Analytics](https://docs.microsoft.com/azure/synapse-analytics/)
+- [Azure Functions Documentation](https://docs.microsoft.com/azure/azure-functions/)
 - [Azure Machine Learning](https://docs.microsoft.com/azure/machine-learning/)
-- [Azure Stream Analytics](https://docs.microsoft.com/azure/stream-analytics/)
+- [Azure Event Hubs](https://docs.microsoft.com/azure/event-hubs/)
 
 ### Community Resources
 - [Azure Data Community](https://techcommunity.microsoft.com/t5/azure-data/ct-p/AzureData)

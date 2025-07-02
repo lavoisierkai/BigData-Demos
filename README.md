@@ -47,7 +47,7 @@ graph TB
     
     subgraph "Processing Layer"
         K[EMR/Spark]
-        L[Synapse Analytics]
+        L[Azure Functions]
         M[Databricks]
         N[Metorikku ETL]
     end
@@ -98,7 +98,6 @@ BigData-Demos/
 ├── 📂 DevOps Solution/
 │   ├── 🔵 Azure/                  # Azure Data Platform
 │   │   ├── data-factory/          # ADF pipelines
-│   │   ├── synapse/               # Analytics workspace
 │   │   ├── arm-templates/         # Infrastructure templates
 │   │   └── powershell-scripts/    # Automation scripts
 │   │
@@ -205,7 +204,7 @@ terraform apply
 - **Customer segmentation** for targeted marketing
 - **Performance dashboards** for executive reporting
 
-**Technologies**: Azure Synapse, Data Factory, Power BI, ARM Templates
+**Technologies**: Azure SQL Database, Data Factory, Power BI, ARM Templates
 
 ### 4. 🏥 Healthcare Data Lake
 **Location**: Multi-platform implementation
@@ -221,7 +220,7 @@ terraform apply
 
 ### Cloud Platforms
 - **AWS**: S3, Glue, EMR, Athena, Lambda, CloudFormation
-- **Azure**: Data Factory, Synapse, Data Lake, Key Vault, ARM Templates
+- **Azure**: Data Factory, SQL Database, Data Lake, Key Vault, ARM Templates
 - **Multi-Cloud**: Terraform, Kubernetes, Docker containerization
 
 ### Big Data & Analytics
