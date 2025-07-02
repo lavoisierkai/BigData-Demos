@@ -1,0 +1,330 @@
+# Production Environment Configuration
+# ==================================
+
+environment:
+  name: production
+  region: us-east-1
+  cost_center: operations
+  auto_shutdown: false
+
+project:
+  name: dataplatform
+  owner: data-engineering-team
+  version: "1.0.0"
+
+# Common tags applied to all resources
+common_tags:
+  Department: "Data Engineering"
+  CostCenter: "Operations"
+  Environment: "Production"
+  Backup: "true"
+  Compliance: "SOX,GDPR"
+
+# Terraform backend configuration
+terraform:
+  state_bucket: "terraform-state-dataplatform-prod"
+  dynamodb_table: "terraform-locks-dataplatform-prod"
+
+# Network configuration (enhanced for production)
+network:
+  create_vpc: true
+  vpc_cidr: "10.1.0.0/16"
+  availability_zones: 3
+  enable_nat_gateway: true
+  enable_vpc_flow_logs: true
+
+# Data lake layers configuration (enhanced retention)
+data_layers:
+  - name: raw
+    description: "Raw data ingestion layer"
+    format: "json"
+    versioning: "Enabled"
+    lifecycle_enabled: true
+    transitions:
+      - days: 90
+        storage_class: "STANDARD_IA"
+      - days: 180
+        storage_class: "GLACIER"
+      - days: 365
+        storage_class: "DEEP_ARCHIVE"
+    expiration_days: 2555  # 7 years
+    abort_incomplete_multipart_upload_days: 1
+    notification_enabled: true
+    sqs_notifications:
+      - queue_arn: "arn:aws:sqs:us-east-1:123456789012:data-ingestion-dlq"
+        events: ["s3:ObjectCreated:*"]
+    lambda_notifications:
+      - lambda_arn: "arn:aws:lambda:us-east-1:123456789012:function:data-quality-check"
+        events: ["s3:ObjectCreated:*"]
+        filter_prefix: "incoming/"
+    
+  - name: processed
+    description: "Cleaned and processed data layer"
+    format: "parquet"
+    versioning: "Enabled"
+    lifecycle_enabled: true
+    transitions:
+      - days: 180
+        storage_class: "STANDARD_IA"
+      - days: 365
+        storage_class: "GLACIER"
+      - days: 1095
+        storage_class: "DEEP_ARCHIVE"
+    expiration_days: 2555  # 7 years
+    abort_incomplete_multipart_upload_days: 1
+    notification_enabled: true
+    sqs_notifications:
+      - queue_arn: "arn:aws:sqs:us-east-1:123456789012:data-processing-queue"
+        events: ["s3:ObjectCreated:*"]
+        filter_prefix: "year="
+        filter_suffix: ".parquet"
+    
+  - name: curated
+    description: "Business-ready curated data layer"
+    format: "parquet"
+    versioning: "Enabled"
+    lifecycle_enabled: true
+    transitions:
+      - days: 365
+        storage_class: "STANDARD_IA"
+      - days: 730
+        storage_class: "GLACIER"
+      - days: 2190
+        storage_class: "DEEP_ARCHIVE"
+    abort_incomplete_multipart_upload_days: 1
+    notification_enabled: true
+    lambda_notifications:
+      - lambda_arn: "arn:aws:lambda:us-east-1:123456789012:function:data-catalog-update"
+        events: ["s3:ObjectCreated:*"]
+        filter_prefix: "business_ready/"
+
+# Security configuration (enhanced for production)
+security:
+  encryption:
+    enabled: true
+    algorithm: "aws:kms"
+    kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/12345678-1234-1234-1234-123456789012"
+    bucket_key_enabled: true
+
+# AWS Glue configuration (encrypted)
+glue:
+  catalog_encryption:
+    enabled: true
+    mode: "SSE-KMS"
+    sse_aws_kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/87654321-4321-4321-4321-210987654321"
+    connection_kms_key_id: "arn:aws:kms:us-east-1:123456789012:key/87654321-4321-4321-4321-210987654321"
+    return_encrypted_password: true
+
+# EMR configuration (production-grade)
+emr:
+  enabled: true
+  use_existing_cluster: false
+  release_label: "emr-6.9.0"
+  applications: ["Spark", "Hadoop", "Hive", "Zeppelin", "Livy", "JupyterHub"]
+  key_name: "dataplatform-prod-key"
+  
+  # Instance configuration (larger for production)
+  master_instance_type: "m5.2xlarge"
+  core_instance_type: "m5.xlarge"
+  core_instance_count: 4
+  
+  # EBS configuration (larger volumes)
+  master_ebs_config:
+    size: 500
+    type: "gp3"
+    volumes_per_instance: 2
+    
+  core_ebs_config:
+    size: 500
+    type: "gp3"
+    volumes_per_instance: 2
+  
+  # Auto scaling (enabled for production)
+  auto_scaling:
+    enabled: true
+    min_capacity: 4
+    max_capacity: 20
+    scale_out_adjustment: 2
+    scale_out_cooldown: 300
+    evaluation_periods: 2
+    period: 300
+    memory_threshold: 15
+  
+  # Task instance groups for spot instances
+  task_instance_groups:
+    - name: "spot-task-group"
+      instance_type: "m5.large"
+      instance_count: 0  # Will be scaled by auto scaling
+      bid_price: "0.08"
+      ebs_config:
+        size: 100
+        type: "gp3"
+        volumes_per_instance: 1
+  
+  # Security groups (more restrictive)
+  ssh_cidr_blocks: ["10.1.0.0/16"]  # VPC only
+  web_ui_access: true
+  web_ui_cidr_blocks: ["10.1.0.0/16"]
+  additional_security_groups: ["sg-12345678"]  # Additional security group
+  
+  # Bootstrap actions
+  bootstrap_actions:
+    - name: "Install Monitoring Agent"
+      path: "s3://dataplatform-prod-scripts/bootstrap/install-monitoring.sh"
+    - name: "Configure Security"
+      path: "s3://dataplatform-prod-scripts/bootstrap/security-hardening.sh"
+    - name: "Install Additional Packages"
+      path: "s3://dataplatform-prod-scripts/bootstrap/install-packages.sh"
+      args: ["python3-dev", "gcc", "htop", "awscli"]
+  
+  # Steps to run on cluster startup
+  steps:
+    - name: "Setup Cluster"
+      jar: "command-runner.jar"
+      args: ["bash", "s3://dataplatform-prod-scripts/setup/cluster-setup.sh"]
+      action_on_failure: "TERMINATE_CLUSTER"
+  
+  # Production Spark configuration
+  configurations:
+    - classification: "spark-defaults"
+      properties:
+        "spark.sql.adaptive.enabled": "true"
+        "spark.sql.adaptive.coalescePartitions.enabled": "true"
+        "spark.sql.adaptive.skewJoin.enabled": "true"
+        "spark.sql.adaptive.localShuffleReader.enabled": "true"
+        "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
+        "spark.sql.hive.metastore.version": "3.1.0"
+        "spark.sql.hive.metastore.jars": "builtin"
+        "spark.dynamicAllocation.enabled": "true"
+        "spark.dynamicAllocation.minExecutors": "2"
+        "spark.dynamicAllocation.maxExecutors": "50"
+        "spark.dynamicAllocation.initialExecutors": "4"
+        "spark.sql.execution.arrow.pyspark.enabled": "true"
+        "spark.speculation": "true"
+        "spark.sql.statistics.histogram.enabled": "true"
+        "spark.sql.cbo.enabled": "true"
+        
+    - classification: "spark-hive-site"
+      properties:
+        "javax.jdo.option.ConnectionURL": "jdbc:mysql://prod-hive-metastore.cluster.amazonaws.com:3306/hive"
+        "javax.jdo.option.ConnectionDriverName": "com.mysql.jdbc.Driver"
+        "javax.jdo.option.ConnectionUserName": "hive_prod"
+        
+    - classification: "hadoop-env"
+      properties: {}
+      configurations:
+        - classification: "export"
+          properties:
+            "JAVA_HOME": "/usr/lib/jvm/java-1.8.0"
+            "HADOOP_DATANODE_HEAPSIZE": "2048"
+            "HADOOP_NAMENODE_HEAPSIZE": "4096"
+    
+    - classification: "yarn-site"
+      properties:
+        "yarn.nodemanager.resource.memory-mb": "14336"
+        "yarn.scheduler.maximum-allocation-mb": "14336"
+        "yarn.nodemanager.vmem-check-enabled": "false"
+        "yarn.log-aggregation-enable": "true"
+        "yarn.log-aggregation.retain-seconds": "604800"  # 7 days
+  
+  idle_timeout: 0  # Never auto-terminate in production
+
+# Compute resource sizing (production scale)
+compute:
+  instance_types:
+    small: "m5.large"
+    medium: "m5.xlarge"
+    large: "m5.2xlarge"
+    xlarge: "m5.4xlarge"
+  
+  auto_scaling:
+    min_instances: 4
+    max_instances: 50
+    target_cpu: 80
+
+# Storage configuration (enhanced durability)
+storage:
+  replication: true
+  backup_retention_days: 365
+  lifecycle_enabled: true
+  cross_region_backup: true
+  backup_vault: "arn:aws:backup:us-east-1:123456789012:backup-vault:dataplatform-prod"
+
+# Data pipeline settings (production schedule)
+pipelines:
+  schedule: "0 1 * * *"  # Daily at 1 AM
+  retry_attempts: 5
+  timeout_minutes: 180
+  
+# Monitoring configuration (comprehensive)
+monitoring:
+  metrics_retention_days: 365
+  log_level: "INFO"
+  alerts_enabled: true
+  detailed_monitoring: true
+  enhanced_monitoring: true
+  
+  # CloudWatch alarms
+  alarms:
+    - name: "EMRClusterUtilization"
+      metric_name: "CoreNodesRunning"
+      threshold: 2
+      comparison_operator: "LessThanThreshold"
+      evaluation_periods: 2
+      
+    - name: "S3BucketSize"
+      metric_name: "BucketSizeBytes"
+      threshold: 10737418240000  # 10TB
+      comparison_operator: "GreaterThanThreshold"
+      evaluation_periods: 1
+      
+    - name: "DataPipelineFailures"
+      metric_name: "PipelineExecutionsFailed"
+      threshold: 0
+      comparison_operator: "GreaterThanThreshold"
+      evaluation_periods: 1
+
+# Disaster recovery configuration
+disaster_recovery:
+  backup_frequency: "daily"
+  backup_retention_days: 365
+  cross_region_replication: true
+  recovery_time_objective: "4h"
+  recovery_point_objective: "1h"
+  
+  # Multi-region setup
+  secondary_region: "us-west-2"
+  replicate_buckets: true
+  replicate_databases: true
+
+# Compliance and governance
+compliance:
+  data_classification: "confidential"
+  retention_policy: "7_years"
+  encryption_required: true
+  audit_logging: true
+  access_logging: true
+  
+  # PCI DSS compliance
+  pci_compliant: false
+  
+  # GDPR compliance
+  gdpr_compliant: true
+  data_residency: "us"
+  
+  # SOX compliance
+  sox_compliant: true
+  change_approval_required: true
+
+# Cost optimization (production-aware)
+cost_optimization:
+  use_spot_instances: true  # For task nodes only
+  scheduled_shutdown: false  # Never shutdown production
+  reserved_instances: true
+  savings_plans: true
+  
+  # Cost allocation tags
+  cost_allocation_tags:
+    BusinessUnit: "DataEngineering"
+    Application: "DataPlatform"
+    Environment: "Production"

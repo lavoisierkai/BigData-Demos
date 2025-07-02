@@ -1,0 +1,538 @@
+# Azure DevOps Pipeline: Data Pipeline CI/CD
+# ==========================================
+#
+# This pipeline demonstrates continuous integration and deployment
+# for data pipelines including validation, testing, and deployment
+# across multiple environments.
+#
+# Pipeline Flow:
+# 1. Code quality and security scanning
+# 2. Unit and integration testing
+# 3. Data quality validation
+# 4. Pipeline artifact creation
+# 5. Deployment to environments
+
+name: DataPipeline-$(Date:yyyyMMdd)-$(Rev:r)
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+    - feature/*
+  paths:
+    include:
+    - data-pipelines/*
+    - Cloud Platform/databricks/*
+    - Spark Application/metorikku/*
+
+pr:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - data-pipelines/*
+
+variables:
+- group: DataPlatform-Common
+- group: DataPlatform-Secrets
+- name: vmImageName
+  value: 'ubuntu-latest'
+- name: pythonVersion
+  value: '3.8'
+- name: sparkVersion
+  value: '3.4.0'
+
+pool:
+  vmImage: $(vmImageName)
+
+stages:
+# =====================================================
+# BUILD AND VALIDATION STAGE
+# =====================================================
+- stage: Build
+  displayName: 'Build and Validate'
+  jobs:
+  - job: CodeQuality
+    displayName: 'Code Quality and Security'
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install flake8 bandit safety black isort mypy
+        pip install -r requirements.txt
+      displayName: 'Install Dependencies'
+
+    - script: |
+        # Code formatting check
+        echo "Checking code formatting with Black..."
+        black --check --diff data-pipelines/
+
+        echo "Checking import sorting with isort..."
+        isort --check-only --diff data-pipelines/
+        
+        echo "Running flake8 linting..."
+        flake8 data-pipelines/ --max-line-length=88 --extend-ignore=E203,W503
+        
+        echo "Running type checking with mypy..."
+        mypy data-pipelines/ --ignore-missing-imports
+      displayName: 'Code Quality Checks'
+
+    - script: |
+        # Security scanning
+        echo "Running security scan with bandit..."
+        bandit -r data-pipelines/ -f json -o bandit-report.json
+        
+        echo "Checking for known security vulnerabilities..."
+        safety check --json --output safety-report.json
+      displayName: 'Security Scanning'
+      continueOnError: true
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Code Quality Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/code-quality-*.xml'
+        mergeTestResults: true
+        testRunTitle: 'Code Quality Tests'
+
+  - job: UnitTests
+    displayName: 'Unit Testing'
+    dependsOn: CodeQuality
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-cov pytest-xdist pytest-mock
+        pip install pyspark==$(sparkVersion)
+        pip install -r requirements.txt
+      displayName: 'Install Test Dependencies'
+
+    - script: |
+        # Set up Spark environment for testing
+        export JAVA_HOME=/usr/lib/jvm/java-11-openjdk-amd64
+        export SPARK_HOME=/opt/spark
+        export PYTHONPATH=$SPARK_HOME/python:$PYTHONPATH
+        
+        # Run unit tests with coverage
+        pytest tests/unit/ \
+          --cov=data-pipelines \
+          --cov-report=xml \
+          --cov-report=html \
+          --junitxml=unit-test-results.xml \
+          -v
+      displayName: 'Run Unit Tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Unit Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'unit-test-results.xml'
+        testRunTitle: 'Unit Tests'
+
+    - task: PublishCodeCoverageResults@1
+      displayName: 'Publish Code Coverage'
+      condition: always()
+      inputs:
+        codeCoverageTool: 'Cobertura'
+        summaryFileLocation: 'coverage.xml'
+        reportDirectory: 'htmlcov'
+
+  - job: IntegrationTests
+    displayName: 'Integration Testing'
+    dependsOn: UnitTests
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+
+    - script: |
+        python -m pip install --upgrade pip
+        pip install pytest pytest-mock docker
+        pip install pyspark==$(sparkVersion)
+        pip install -r requirements.txt
+      displayName: 'Install Dependencies'
+
+    - task: DockerInstaller@0
+      displayName: 'Install Docker'
+      inputs:
+        dockerVersion: '20.10.7'
+
+    - script: |
+        # Start test infrastructure (Kafka, PostgreSQL, etc.)
+        docker-compose -f tests/docker-compose.test.yml up -d
+        
+        # Wait for services to be ready
+        sleep 30
+        
+        # Run integration tests
+        pytest tests/integration/ \
+          --junitxml=integration-test-results.xml \
+          -v
+      displayName: 'Run Integration Tests'
+
+    - script: |
+        # Cleanup test infrastructure
+        docker-compose -f tests/docker-compose.test.yml down -v
+      displayName: 'Cleanup Test Infrastructure'
+      condition: always()
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Integration Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'integration-test-results.xml'
+        testRunTitle: 'Integration Tests'
+
+# =====================================================
+# DATA QUALITY VALIDATION STAGE
+# =====================================================
+- stage: DataQuality
+  displayName: 'Data Quality Validation'
+  dependsOn: Build
+  jobs:
+  - job: ValidateDataQuality
+    displayName: 'Data Quality Tests'
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+
+    - script: |
+        pip install great-expectations pandas pyspark==$(sparkVersion)
+        pip install -r requirements.txt
+      displayName: 'Install Data Quality Tools'
+
+    - task: AzureCLI@2
+      displayName: 'Setup Test Data'
+      inputs:
+        azureSubscription: '$(azureServiceConnectionDev)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Create test datasets in development environment
+          python scripts/create-test-data.py \
+            --environment dev \
+            --storage-account $(devStorageAccount) \
+            --container test-data
+
+    - script: |
+        # Run Great Expectations data quality checks
+        echo "Running data quality validation..."
+        
+        export SPARK_HOME=/opt/spark
+        export PYTHONPATH=$SPARK_HOME/python:$PYTHONPATH
+        
+        # Initialize Great Expectations context
+        python -c "
+        import great_expectations as ge
+        from great_expectations.core.batch import RuntimeBatchRequest
+        
+        # Setup data context
+        context = ge.get_context()
+        
+        # Run data quality validations
+        results = context.run_checkpoint('data_quality_checkpoint')
+        
+        # Check if validations passed
+        if not results.success:
+            print('Data quality validation failed!')
+            exit(1)
+        else:
+            print('All data quality checks passed!')
+        "
+      displayName: 'Run Data Quality Validation'
+
+    - script: |
+        # Custom data quality tests
+        python tests/data-quality/test_data_completeness.py
+        python tests/data-quality/test_data_accuracy.py
+        python tests/data-quality/test_data_consistency.py
+      displayName: 'Run Custom Data Quality Tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Data Quality Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'data-quality-results.xml'
+        testRunTitle: 'Data Quality Tests'
+
+# =====================================================
+# PERFORMANCE TESTING STAGE
+# =====================================================
+- stage: Performance
+  displayName: 'Performance Testing'
+  dependsOn: DataQuality
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - job: PerformanceTests
+    displayName: 'Performance and Load Testing'
+    timeoutInMinutes: 120
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: AzureCLI@2
+      displayName: 'Setup Performance Test Environment'
+      inputs:
+        azureSubscription: '$(azureServiceConnectionDev)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Create temporary Databricks cluster for performance testing
+          databricks clusters create --json-file cluster-config.json
+          
+          # Wait for cluster to be ready
+          databricks clusters get --cluster-id $(databricksClusterId)
+
+    - script: |
+        # Run performance benchmarks
+        python tests/performance/benchmark_etl_pipeline.py \
+          --cluster-id $(databricksClusterId) \
+          --data-size large \
+          --iterations 3
+        
+        # Run memory and CPU profiling
+        python tests/performance/profile_transformations.py
+        
+        # Run scalability tests
+        python tests/performance/test_scalability.py
+      displayName: 'Run Performance Tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Performance Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'performance-test-results.xml'
+        testRunTitle: 'Performance Tests'
+
+    - task: AzureCLI@2
+      displayName: 'Cleanup Performance Test Environment'
+      condition: always()
+      inputs:
+        azureSubscription: '$(azureServiceConnectionDev)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Terminate test cluster
+          databricks clusters delete --cluster-id $(databricksClusterId)
+
+# =====================================================
+# ARTIFACT CREATION STAGE
+# =====================================================
+- stage: CreateArtifacts
+  displayName: 'Create Deployment Artifacts'
+  dependsOn: 
+  - Build
+  - DataQuality
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - job: BuildArtifacts
+    displayName: 'Build Deployment Artifacts'
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python $(pythonVersion)'
+      inputs:
+        versionSpec: '$(pythonVersion)'
+
+    - script: |
+        # Create wheel packages for Python components
+        python setup.py bdist_wheel
+        
+        # Create JAR files for Scala/Java components
+        if [ -d "scala-components" ]; then
+          cd scala-components
+          sbt clean assembly
+          cd ..
+        fi
+      displayName: 'Build Packages'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Databricks Notebooks'
+      inputs:
+        sourceFolder: 'Cloud Platform/databricks'
+        contents: '**/*.py'
+        targetFolder: '$(Build.ArtifactStagingDirectory)/notebooks'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Metorikku Configurations'
+      inputs:
+        sourceFolder: 'Spark Application/metorikku'
+        contents: '**/*.yaml'
+        targetFolder: '$(Build.ArtifactStagingDirectory)/metorikku'
+
+    - task: CopyFiles@2
+      displayName: 'Copy Data Factory Pipelines'
+      inputs:
+        sourceFolder: 'DevOps Solution/Azure/data-factory'
+        contents: '**/*.json'
+        targetFolder: '$(Build.ArtifactStagingDirectory)/data-factory'
+
+    - script: |
+        # Create deployment package
+        cd $(Build.ArtifactStagingDirectory)
+        
+        # Create version file
+        echo "Build: $(Build.BuildNumber)" > version.txt
+        echo "Commit: $(Build.SourceVersion)" >> version.txt
+        echo "Date: $(date)" >> version.txt
+        
+        # Package everything
+        tar -czf data-platform-$(Build.BuildNumber).tar.gz .
+      displayName: 'Create Deployment Package'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Build Artifacts'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)'
+        artifact: 'data-platform-artifacts'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Deployment Package'
+      inputs:
+        targetPath: '$(Build.ArtifactStagingDirectory)/data-platform-$(Build.BuildNumber).tar.gz'
+        artifact: 'deployment-package'
+
+# =====================================================
+# SECURITY AND COMPLIANCE STAGE
+# =====================================================
+- stage: Security
+  displayName: 'Security and Compliance'
+  dependsOn: CreateArtifacts
+  jobs:
+  - job: SecurityCompliance
+    displayName: 'Security and Compliance Checks'
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: CredScan@3
+      displayName: 'Credential Scanner'
+      inputs:
+        toolMajorVersion: 'V2'
+        scanFolder: '$(Build.SourcesDirectory)'
+        debugMode: false
+
+    - task: SdtReport@2
+      displayName: 'Security Development Tools Report'
+      inputs:
+        GdnExportAllTools: true
+        GdnExportGdnToolSdtReport: true
+
+    - script: |
+        # GDPR compliance check
+        python scripts/gdpr-compliance-check.py
+        
+        # Data retention policy validation
+        python scripts/validate-retention-policies.py
+        
+        # Encryption verification
+        python scripts/verify-encryption.py
+      displayName: 'Compliance Checks'
+
+    - task: PublishSecurityAnalysisLogs@3
+      displayName: 'Publish Security Analysis Logs'
+      inputs:
+        ArtifactName: 'CodeAnalysisLogs'
+        ArtifactType: 'Container'
+
+# =====================================================
+# NOTIFICATION STAGE
+# =====================================================
+- stage: Notification
+  displayName: 'Notifications'
+  dependsOn: 
+  - Security
+  condition: always()
+  jobs:
+  - job: SendNotifications
+    displayName: 'Send Build Notifications'
+    steps:
+    - task: PowerShell@2
+      displayName: 'Send Teams Notification'
+      inputs:
+        targetType: 'inline'
+        script: |
+          $webhookUrl = "$(teamsWebhookUrl)"
+          $buildStatus = "$(Agent.JobStatus)"
+          $buildNumber = "$(Build.BuildNumber)"
+          $sourceBranch = "$(Build.SourceBranchName)"
+          
+          $message = @{
+            "@type" = "MessageCard"
+            "@context" = "http://schema.org/extensions"
+            "themeColor" = if ($buildStatus -eq "Succeeded") { "28a745" } else { "dc3545" }
+            "summary" = "Data Pipeline Build $buildStatus"
+            "sections" = @(
+              @{
+                "activityTitle" = "Data Pipeline Build $buildStatus"
+                "activitySubtitle" = "Build $buildNumber on branch $sourceBranch"
+                "facts" = @(
+                  @{
+                    "name" = "Status"
+                    "value" = $buildStatus
+                  },
+                  @{
+                    "name" = "Build Number"
+                    "value" = $buildNumber
+                  },
+                  @{
+                    "name" = "Branch"
+                    "value" = $sourceBranch
+                  }
+                )
+              }
+            )
+          }
+          
+          $json = $message | ConvertTo-Json -Depth 4
+          Invoke-RestMethod -Uri $webhookUrl -Method POST -Body $json -ContentType 'application/json'
+
+    - task: EmailReport@1
+      displayName: 'Send Email Report'
+      condition: failed()
+      inputs:
+        sendMailConditionConfig: 'Always'
+        subject: 'Data Pipeline Build Failed - $(Build.BuildNumber)'
+        to: '$(notificationEmail)'
+        body: |
+          The data pipeline build $(Build.BuildNumber) has failed.
+          
+          Branch: $(Build.SourceBranchName)
+          Commit: $(Build.SourceVersion)
+          
+          Please check the build logs for more details.
+        groupTestResultsBy: 'run'
+        includeCommits: true

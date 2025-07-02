@@ -1,0 +1,633 @@
+# Bamboo Plan Configuration: Data Platform Build
+# =============================================
+#
+# This plan demonstrates comprehensive CI/CD for data platform components
+# including code quality, testing, packaging, and deployment automation.
+#
+# Plan Structure:
+# 1. Code Quality Stage - Linting, security, formatting
+# 2. Build Stage - Compilation and packaging  
+# 3. Test Stage - Unit, integration, and performance tests
+# 4. Package Stage - Artifact creation and publishing
+# 5. Deploy Stage - Environment-specific deployments
+
+plan:
+  project-key: DP
+  key: BUILD
+  name: "Data Platform Build"
+  description: "Automated build and test pipeline for data platform components"
+  
+  # Build configuration
+  build-plugin: com.atlassian.bamboo.plugins.vcs:vcs
+  
+  # Repository configuration
+  repositories:
+    - name: "Data Platform Repository"
+      type: "git"
+      url: "https://github.com/company/data-platform.git"
+      branch: "main"
+      authentication: "ssh-key"
+      
+  # Global variables
+  variables:
+    python.version: "3.8"
+    java.version: "11"
+    spark.version: "3.4.0"
+    terraform.version: "1.6.0"
+    build.environment: "bamboo"
+    artifact.retention.days: "30"
+    
+  # Triggers
+  triggers:
+    - type: "repository-polling"
+      description: "Poll repository every 3 minutes"
+      polling-frequency: "180"
+      
+    - type: "scheduled"
+      description: "Nightly build"
+      cron-expression: "0 2 * * *"
+      
+  # Notifications
+  notifications:
+    - type: "email"
+      events: ["build-failed", "build-fixed"]
+      recipients: 
+        - "data-team@company.com"
+        - "devops-team@company.com"
+      subject: "Data Platform Build ${bamboo.buildResultKey} - ${bamboo.buildState}"
+      
+    - type: "slack"
+      events: ["build-completed"]
+      webhook-url: "${bamboo.slack.webhook.url}"
+      channel: "#data-engineering"
+      
+  # Build stages
+  stages:
+    # =====================================================
+    # CODE QUALITY STAGE
+    # =====================================================
+    - name: "Code Quality"
+      description: "Code quality checks, linting, and security scanning"
+      
+      jobs:
+        - name: "Python Quality Checks"
+          key: "PQC"
+          description: "Python code linting and formatting validation"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              force-clean-build: true
+              
+            - type: "script"
+              description: "Setup Python environment"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "Setting up Python ${python.version} environment..."
+                
+                # Create virtual environment
+                python${python.version} -m venv venv
+                source venv/bin/activate
+                
+                # Upgrade pip and install tools
+                pip install --upgrade pip
+                pip install flake8 black isort bandit safety mypy pylint
+                
+                # Install project dependencies
+                if [ -f requirements.txt ]; then
+                    pip install -r requirements.txt
+                fi
+                
+                if [ -f requirements-dev.txt ]; then
+                    pip install -r requirements-dev.txt
+                fi
+                
+                echo "Python environment setup complete"
+                
+            - type: "script"
+              description: "Run Python linting and formatting checks"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                source venv/bin/activate
+                
+                echo "=== Running Python Code Quality Checks ==="
+                
+                # Check code formatting with Black
+                echo "Checking code formatting with Black..."
+                black --check --diff data-pipelines/ || {
+                    echo "❌ Code formatting issues found. Run 'black data-pipelines/' to fix."
+                    exit 1
+                }
+                
+                # Check import sorting with isort
+                echo "Checking import sorting with isort..."
+                isort --check-only --diff data-pipelines/ || {
+                    echo "❌ Import sorting issues found. Run 'isort data-pipelines/' to fix."
+                    exit 1
+                }
+                
+                # Run flake8 linting
+                echo "Running flake8 linting..."
+                flake8 data-pipelines/ \
+                    --max-line-length=88 \
+                    --extend-ignore=E203,W503 \
+                    --format=junit-xml \
+                    --output-file=flake8-results.xml
+                
+                # Run pylint
+                echo "Running pylint analysis..."
+                pylint data-pipelines/ \
+                    --output-format=json \
+                    --reports=yes \
+                    --score=yes > pylint-results.json || true
+                
+                # Type checking with mypy
+                echo "Running type checking with mypy..."
+                mypy data-pipelines/ \
+                    --ignore-missing-imports \
+                    --junit-xml=mypy-results.xml || true
+                
+                echo "✅ Python code quality checks completed"
+                
+          test-results:
+            - type: "junit"
+              path: "flake8-results.xml"
+            - type: "junit" 
+              path: "mypy-results.xml"
+              
+        - name: "Security Scanning"
+          key: "SEC"
+          description: "Security vulnerability scanning"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Run security scans"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                source venv/bin/activate
+                
+                echo "=== Running Security Scans ==="
+                
+                # Run Bandit security scan
+                echo "Running Bandit security scan..."
+                bandit -r data-pipelines/ \
+                    -f json \
+                    -o bandit-results.json \
+                    --severity-level medium || true
+                
+                # Check for known vulnerabilities in dependencies
+                echo "Checking for known vulnerabilities..."
+                safety check \
+                    --json \
+                    --output safety-results.json || true
+                
+                # Secret detection (basic patterns)
+                echo "Scanning for potential secrets..."
+                grep -r -n -i \
+                    -E "(password|secret|key|token|api_key)" \
+                    --include="*.py" \
+                    --include="*.yaml" \
+                    --include="*.json" \
+                    data-pipelines/ > secret-scan-results.txt || true
+                
+                if [ -s secret-scan-results.txt ]; then
+                    echo "⚠️  Potential secrets found - please review:"
+                    cat secret-scan-results.txt
+                fi
+                
+                echo "✅ Security scanning completed"
+                
+        - name: "Infrastructure Validation" 
+          key: "INFRA"
+          description: "Validate infrastructure templates"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Install Terraform"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "Installing Terraform ${terraform.version}..."
+                
+                # Download and install Terraform
+                wget -q https://releases.hashicorp.com/terraform/${terraform.version}/terraform_${terraform.version}_linux_amd64.zip
+                unzip terraform_${terraform.version}_linux_amd64.zip
+                sudo mv terraform /usr/local/bin/
+                
+                # Verify installation
+                terraform version
+                
+                echo "✅ Terraform installation completed"
+                
+            - type: "script"
+              description: "Validate Terraform configurations"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Validating Terraform Configurations ==="
+                
+                # Validate AWS data lake configuration
+                cd "DevOps Solution/Templating/terraform/aws/data-lake"
+                terraform fmt -check -diff
+                terraform init -backend=false
+                terraform validate
+                cd -
+                
+                echo "✅ Terraform validation completed"
+                
+            - type: "script"
+              description: "Validate ARM templates"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Validating ARM Templates ==="
+                
+                # Install Azure CLI if not present
+                if ! command -v az &> /dev/null; then
+                    curl -sL https://aka.ms/InstallAzureCLIDeb | sudo bash
+                fi
+                
+                # Validate ARM templates (dry-run)
+                az deployment group validate \
+                    --resource-group "rg-validation-temp" \
+                    --template-file "DevOps Solution/Azure/arm-templates/azure-data-platform.json" \
+                    --parameters "DevOps Solution/Azure/arm-templates/parameters-dev.json" || {
+                    echo "⚠️  ARM template validation failed - this may be due to missing resource group"
+                    echo "Validation will be performed during deployment"
+                }
+                
+                echo "✅ ARM template validation completed"
+
+    # =====================================================
+    # BUILD STAGE
+    # =====================================================
+    - name: "Build"
+      description: "Build and compile data platform components"
+      
+      jobs:
+        - name: "Python Build"
+          key: "PYBUILD"
+          description: "Build Python packages and wheels"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Build Python packages"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                source venv/bin/activate
+                
+                echo "=== Building Python Packages ==="
+                
+                # Install build tools
+                pip install wheel setuptools build twine
+                
+                # Build source distribution and wheel
+                python -m build
+                
+                # Verify the build
+                twine check dist/*
+                
+                echo "✅ Python package build completed"
+                ls -la dist/
+                
+        - name: "Spark Application Build"
+          key: "SPARK"
+          description: "Package Spark applications"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Package Spark applications"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Packaging Spark Applications ==="
+                
+                # Package Metorikku configurations
+                cd "Spark Application/metorikku"
+                zip -r ../../metorikku-configs.zip config/ jdbc/ s3/
+                cd -
+                
+                # Package Databricks notebooks
+                cd "Cloud Platform/databricks"
+                zip -r ../../databricks-notebooks.zip .
+                cd -
+                
+                echo "✅ Spark applications packaged"
+                ls -la *.zip
+
+    # =====================================================
+    # TEST STAGE  
+    # =====================================================
+    - name: "Test"
+      description: "Run comprehensive test suite"
+      
+      jobs:
+        - name: "Unit Tests"
+          key: "UNIT"
+          description: "Run unit tests with coverage"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Run unit tests"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                source venv/bin/activate
+                
+                echo "=== Running Unit Tests ==="
+                
+                # Install test dependencies
+                pip install pytest pytest-cov pytest-xdist pytest-mock
+                pip install pyspark==${spark.version}
+                
+                # Set up Spark environment for testing
+                export JAVA_HOME=/usr/lib/jvm/java-${java.version}-openjdk-amd64
+                export PYSPARK_PYTHON=python
+                export PYSPARK_DRIVER_PYTHON=python
+                
+                # Run tests with coverage
+                pytest tests/unit/ \
+                    --cov=data-pipelines \
+                    --cov-report=xml \
+                    --cov-report=html \
+                    --cov-report=term \
+                    --junitxml=unit-test-results.xml \
+                    --maxfail=5 \
+                    -v
+                
+                echo "✅ Unit tests completed"
+                
+          test-results:
+            - type: "junit"
+              path: "unit-test-results.xml"
+              
+          artifacts:
+            - name: "Coverage Report"
+              pattern: "htmlcov/**"
+              shared: false
+              
+        - name: "Integration Tests"
+          key: "INTEGRATION"
+          description: "Run integration tests with test infrastructure"
+          
+          requirements:
+            - type: "docker"
+              
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Start test infrastructure"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Starting Test Infrastructure ==="
+                
+                # Start test services using Docker Compose
+                if [ -f "tests/docker-compose.test.yml" ]; then
+                    docker-compose -f tests/docker-compose.test.yml up -d
+                    
+                    # Wait for services to be ready
+                    echo "Waiting for services to start..."
+                    sleep 60
+                    
+                    # Verify services are running
+                    docker-compose -f tests/docker-compose.test.yml ps
+                else
+                    echo "No test infrastructure configuration found"
+                fi
+                
+            - type: "script"
+              description: "Run integration tests"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                source venv/bin/activate
+                
+                echo "=== Running Integration Tests ==="
+                
+                # Install additional test dependencies
+                pip install testcontainers docker
+                
+                # Run integration tests
+                pytest tests/integration/ \
+                    --junitxml=integration-test-results.xml \
+                    --maxfail=3 \
+                    -v
+                
+                echo "✅ Integration tests completed"
+                
+            - type: "script"
+              description: "Cleanup test infrastructure"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Cleaning Up Test Infrastructure ==="
+                
+                # Stop and remove test services
+                if [ -f "tests/docker-compose.test.yml" ]; then
+                    docker-compose -f tests/docker-compose.test.yml down -v
+                    docker-compose -f tests/docker-compose.test.yml rm -f
+                fi
+                
+                # Clean up any remaining containers
+                docker system prune -f
+                
+                echo "✅ Test infrastructure cleanup completed"
+                
+          final-tasks:
+            - type: "script"
+              description: "Ensure cleanup"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                # Ensure cleanup runs even if tests fail
+                if [ -f "tests/docker-compose.test.yml" ]; then
+                    docker-compose -f tests/docker-compose.test.yml down -v || true
+                fi
+                
+          test-results:
+            - type: "junit"
+              path: "integration-test-results.xml"
+
+    # =====================================================
+    # PACKAGE STAGE
+    # =====================================================
+    - name: "Package"
+      description: "Create deployment packages and artifacts"
+      
+      jobs:
+        - name: "Create Artifacts"
+          key: "PACKAGE"
+          description: "Package all components for deployment"
+          
+          tasks:
+            - type: "vcs-checkout"
+              description: "Checkout source code"
+              repository: "Data Platform Repository"
+              
+            - type: "script"
+              description: "Create deployment packages"
+              interpreter: "/bin/bash"
+              body: |
+                #!/bin/bash
+                set -e
+                
+                echo "=== Creating Deployment Packages ==="
+                
+                # Create artifacts directory
+                mkdir -p artifacts
+                
+                # Copy Python wheels
+                if [ -d "dist" ]; then
+                    cp dist/*.whl artifacts/
+                fi
+                
+                # Copy Spark application packages
+                if [ -f "metorikku-configs.zip" ]; then
+                    cp metorikku-configs.zip artifacts/
+                fi
+                
+                if [ -f "databricks-notebooks.zip" ]; then
+                    cp databricks-notebooks.zip artifacts/
+                fi
+                
+                # Package infrastructure templates
+                zip -r artifacts/infrastructure-templates.zip "DevOps Solution/"
+                
+                # Create version file
+                cat > artifacts/version.txt << EOF
+                Build Number: ${bamboo.buildNumber}
+                Build Key: ${bamboo.buildResultKey}
+                Git Commit: ${bamboo.repository.revision.number}
+                Build Date: $(date)
+                Branch: ${bamboo.repository.branch.name}
+                EOF
+                
+                # Create deployment script
+                cat > artifacts/deploy.sh << 'EOF'
+                #!/bin/bash
+                # Deployment script for data platform
+                
+                ENVIRONMENT=$1
+                if [ -z "$ENVIRONMENT" ]; then
+                    echo "Usage: $0 <environment>"
+                    exit 1
+                fi
+                
+                echo "Deploying data platform to $ENVIRONMENT environment..."
+                
+                # Extract infrastructure templates
+                unzip -q infrastructure-templates.zip
+                
+                # Deploy infrastructure
+                cd "DevOps Solution/Templating/terraform/aws/data-lake"
+                terraform init
+                terraform plan -var-file="environments/${ENVIRONMENT}.tfvars"
+                terraform apply -auto-approve
+                cd -
+                
+                echo "Deployment completed successfully!"
+                EOF
+                
+                chmod +x artifacts/deploy.sh
+                
+                # List all artifacts
+                echo "✅ Deployment packages created:"
+                ls -la artifacts/
+                
+          artifacts:
+            - name: "Data Platform Artifacts"
+              pattern: "artifacts/**"
+              shared: true
+              
+            - name: "Python Packages"
+              pattern: "dist/*.whl"
+              shared: true
+              
+            - name: "Infrastructure Templates"
+              pattern: "artifacts/infrastructure-templates.zip"
+              shared: true
+
+  # Plan-level final tasks
+  final-tasks:
+    - type: "script"
+      description: "Cleanup build environment"
+      interpreter: "/bin/bash"
+      body: |
+        #!/bin/bash
+        # Clean up temporary files and environments
+        rm -rf venv/ || true
+        rm -rf dist/ || true
+        rm -rf .pytest_cache/ || true
+        rm -rf __pycache__/ || true
+        find . -name "*.pyc" -delete || true
+        
+        echo "✅ Build environment cleaned up"
+
+# Plan metadata
+labels:
+  - "data-platform"
+  - "python"
+  - "spark" 
+  - "aws"
+  - "azure"
+  - "ci-cd"
+
+# Plan permissions
+permissions:
+  - users: ["data-team", "devops-team"]
+    permissions: ["read", "write", "build"]
+  - groups: ["developers"] 
+    permissions: ["read", "build"]

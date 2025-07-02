@@ -1,0 +1,497 @@
+# Azure DevOps Pipeline: Infrastructure Deployment
+# ===============================================
+#
+# This pipeline demonstrates Infrastructure as Code (IaC) deployment patterns
+# for Azure data platform using ARM templates and Terraform.
+#
+# Pipeline Flow:
+# 1. Validate infrastructure templates
+# 2. Deploy to development environment
+# 3. Run infrastructure tests
+# 4. Deploy to staging environment
+# 5. Deploy to production with approvals
+
+name: Infrastructure-$(Date:yyyyMMdd)-$(Rev:r)
+
+trigger:
+  branches:
+    include:
+    - main
+    - develop
+  paths:
+    include:
+    - infrastructure/*
+    - DevOps Solution/Azure/arm-templates/*
+    - DevOps Solution/Templating/terraform/*
+
+pr:
+  branches:
+    include:
+    - main
+  paths:
+    include:
+    - infrastructure/*
+
+variables:
+- group: DataPlatform-Common
+- group: DataPlatform-Secrets
+- name: vmImageName
+  value: 'ubuntu-latest'
+- name: terraformVersion
+  value: '1.6.0'
+
+stages:
+# =====================================================
+# VALIDATION STAGE
+# =====================================================
+- stage: Validate
+  displayName: 'Validate Infrastructure Templates'
+  jobs:
+  - job: ValidateARM
+    displayName: 'Validate ARM Templates'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - checkout: self
+      clean: true
+    
+    - task: AzureCLI@2
+      displayName: 'Install Azure CLI Extensions'
+      inputs:
+        azureSubscription: '$(azureServiceConnection)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Install required extensions
+          az extension add --name datafactory --yes
+          az extension add --name synapse --yes
+          az version
+
+    - task: AzureResourceManagerTemplateDeployment@3
+      displayName: 'Validate Data Platform ARM Template'
+      inputs:
+        deploymentScope: 'Resource Group'
+        azureResourceManagerConnection: '$(azureServiceConnection)'
+        action: 'Create Or Update Resource Group'
+        resourceGroupName: '$(devResourceGroupName)'
+        location: '$(azureLocation)'
+        templateLocation: 'Linked artifact'
+        csmFile: 'DevOps Solution/Azure/arm-templates/azure-data-platform.json'
+        csmParametersFile: 'DevOps Solution/Azure/arm-templates/parameters-dev.json'
+        deploymentMode: 'Validation'
+        deploymentName: 'validate-$(Build.BuildId)'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish ARM Validation Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: '**/arm-validation-*.xml'
+        mergeTestResults: true
+        testRunTitle: 'ARM Template Validation'
+
+  - job: ValidateTerraform
+    displayName: 'Validate Terraform Configuration'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: TerraformInstaller@0
+      displayName: 'Install Terraform'
+      inputs:
+        terraformVersion: $(terraformVersion)
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Init'
+      inputs:
+        provider: 'azurerm'
+        command: 'init'
+        workingDirectory: 'DevOps Solution/Templating/terraform/aws/data-lake'
+        backendServiceArm: '$(azureServiceConnection)'
+        backendAzureRmResourceGroupName: '$(terraformResourceGroupName)'
+        backendAzureRmStorageAccountName: '$(terraformStorageAccountName)'
+        backendAzureRmContainerName: 'terraform-state'
+        backendAzureRmKey: 'infrastructure.tfstate'
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Validate'
+      inputs:
+        provider: 'azurerm'
+        command: 'validate'
+        workingDirectory: 'DevOps Solution/Templating/terraform/aws/data-lake'
+
+    - task: TerraformTaskV4@4
+      displayName: 'Terraform Plan'
+      inputs:
+        provider: 'azurerm'
+        command: 'plan'
+        workingDirectory: 'DevOps Solution/Templating/terraform/aws/data-lake'
+        environmentServiceNameAzureRM: '$(azureServiceConnection)'
+        commandOptions: '-var-file="environments/dev.tfvars" -out=tfplan'
+
+    - task: PublishPipelineArtifact@1
+      displayName: 'Publish Terraform Plan'
+      inputs:
+        targetPath: 'DevOps Solution/Templating/terraform/aws/data-lake/tfplan'
+        artifact: 'terraform-plan-dev'
+
+  - job: SecurityScan
+    displayName: 'Security and Compliance Scanning'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: CredScan@3
+      displayName: 'Run Credential Scanner'
+      inputs:
+        toolMajorVersion: 'V2'
+        scanFolder: '$(Build.SourcesDirectory)'
+        debugMode: false
+
+    - task: Armttk@2
+      displayName: 'ARM Template Security Scan'
+      inputs:
+        templatelocation: 'DevOps Solution/Azure/arm-templates/'
+        resultLocation: '$(Build.ArtifactStagingDirectory)/armttk'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Security Scan Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'NUnit'
+        testResultsFiles: '$(Build.ArtifactStagingDirectory)/armttk/*.xml'
+        mergeTestResults: true
+        testRunTitle: 'Security Scan Results'
+
+# =====================================================
+# DEVELOPMENT DEPLOYMENT STAGE
+# =====================================================
+- stage: DeployDev
+  displayName: 'Deploy to Development'
+  dependsOn: Validate
+  condition: and(succeeded(), ne(variables['Build.Reason'], 'PullRequest'))
+  jobs:
+  - deployment: DeployInfraDev
+    displayName: 'Deploy Infrastructure to Dev'
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'Development'
+    variables:
+    - group: DataPlatform-Dev
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+            clean: true
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: 'Deploy Data Platform to Dev'
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: '$(azureServiceConnectionDev)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '$(devResourceGroupName)'
+              location: '$(azureLocation)'
+              templateLocation: 'Linked artifact'
+              csmFile: 'DevOps Solution/Azure/arm-templates/azure-data-platform.json'
+              csmParametersFile: 'DevOps Solution/Azure/arm-templates/parameters-dev.json'
+              overrideParameters: |
+                -projectName "$(projectName)" 
+                -environment "dev" 
+                -administratorLogin "$(sqlAdminUsername)" 
+                -administratorLoginPassword "$(sqlAdminPassword)"
+              deploymentMode: 'Incremental'
+              deploymentName: 'deploy-dev-$(Build.BuildId)'
+
+          - task: AzureCLI@2
+            displayName: 'Configure Data Factory'
+            inputs:
+              azureSubscription: '$(azureServiceConnectionDev)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Get resource names from ARM deployment
+                dataFactoryName=$(az deployment group show \
+                  --resource-group $(devResourceGroupName) \
+                  --name deploy-dev-$(Build.BuildId) \
+                  --query properties.outputs.dataFactoryName.value -o tsv)
+                
+                echo "##vso[task.setvariable variable=dataFactoryName]$dataFactoryName"
+                
+                # Wait for Data Factory to be ready
+                echo "Waiting for Data Factory to be ready..."
+                az datafactory factory show \
+                  --factory-name $dataFactoryName \
+                  --resource-group $(devResourceGroupName)
+
+          - task: AzureCLI@2
+            displayName: 'Deploy Data Factory Pipelines'
+            inputs:
+              azureSubscription: '$(azureServiceConnectionDev)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Deploy linked services
+                echo "Deploying linked services..."
+                
+                # Deploy datasets
+                echo "Deploying datasets..."
+                
+                # Deploy pipelines
+                echo "Deploying pipelines..."
+                az datafactory pipeline create \
+                  --factory-name $(dataFactoryName) \
+                  --resource-group $(devResourceGroupName) \
+                  --pipeline @"DevOps Solution/Azure/data-factory/pipelines/ecommerce-etl-pipeline.json"
+
+          - task: PowerShell@2
+            displayName: 'Configure Synapse Workspace'
+            inputs:
+              targetType: 'inline'
+              script: |
+                # Install required modules
+                Install-Module -Name Az.Synapse -Force -AllowClobber
+                
+                # Get Synapse workspace name
+                $synapseWorkspace = "$(synapseWorkspaceName)"
+                
+                # Deploy notebooks
+                Write-Host "Deploying Synapse notebooks..."
+                $notebookPath = "DevOps Solution/Azure/synapse/notebooks"
+                
+                Get-ChildItem -Path $notebookPath -Filter "*.ipynb" | ForEach-Object {
+                    Write-Host "Deploying notebook: $($_.Name)"
+                    # Note: In real implementation, use Set-AzSynapseNotebook
+                }
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Deployment Logs'
+            condition: always()
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)/deployment-logs'
+              artifact: 'deployment-logs-dev'
+
+# =====================================================
+# INFRASTRUCTURE TESTING STAGE
+# =====================================================
+- stage: TestInfrastructure
+  displayName: 'Test Infrastructure'
+  dependsOn: DeployDev
+  jobs:
+  - job: InfrastructureTests
+    displayName: 'Run Infrastructure Tests'
+    pool:
+      vmImage: $(vmImageName)
+    variables:
+    - group: DataPlatform-Dev
+    
+    steps:
+    - checkout: self
+      clean: true
+
+    - task: UsePythonVersion@0
+      displayName: 'Use Python 3.8'
+      inputs:
+        versionSpec: '3.8'
+
+    - script: |
+        pip install pytest azure-mgmt-resource azure-mgmt-datafactory azure-mgmt-synapse
+      displayName: 'Install Dependencies'
+
+    - task: AzureCLI@2
+      displayName: 'Test Resource Deployment'
+      inputs:
+        azureSubscription: '$(azureServiceConnectionDev)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Test that all resources are deployed correctly
+          echo "Testing resource group: $(devResourceGroupName)"
+          
+          # Check Data Factory
+          dataFactoryExists=$(az datafactory factory list \
+            --resource-group $(devResourceGroupName) \
+            --query "length([?name=='$(dataFactoryName)'])")
+          
+          if [ "$dataFactoryExists" -eq "1" ]; then
+            echo "✅ Data Factory deployed successfully"
+          else
+            echo "❌ Data Factory deployment failed"
+            exit 1
+          fi
+          
+          # Check Synapse Workspace
+          synapseExists=$(az synapse workspace list \
+            --resource-group $(devResourceGroupName) \
+            --query "length([?name=='$(synapseWorkspaceName)'])")
+          
+          if [ "$synapseExists" -eq "1" ]; then
+            echo "✅ Synapse Workspace deployed successfully"
+          else
+            echo "❌ Synapse Workspace deployment failed"
+            exit 1
+          fi
+
+    - script: |
+        # Run Python infrastructure tests
+        python -m pytest tests/infrastructure/ -v --junitxml=infrastructure-test-results.xml
+      displayName: 'Run Infrastructure Tests'
+
+    - task: PublishTestResults@2
+      displayName: 'Publish Infrastructure Test Results'
+      condition: always()
+      inputs:
+        testResultsFormat: 'JUnit'
+        testResultsFiles: 'infrastructure-test-results.xml'
+        testRunTitle: 'Infrastructure Tests'
+
+# =====================================================
+# STAGING DEPLOYMENT STAGE
+# =====================================================
+- stage: DeployStaging
+  displayName: 'Deploy to Staging'
+  dependsOn: TestInfrastructure
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployInfraStaging
+    displayName: 'Deploy Infrastructure to Staging'
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'Staging'
+    variables:
+    - group: DataPlatform-Staging
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+            clean: true
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: 'Deploy Data Platform to Staging'
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: '$(azureServiceConnectionStaging)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '$(stagingResourceGroupName)'
+              location: '$(azureLocation)'
+              templateLocation: 'Linked artifact'
+              csmFile: 'DevOps Solution/Azure/arm-templates/azure-data-platform.json'
+              csmParametersFile: 'DevOps Solution/Azure/arm-templates/parameters-staging.json'
+              overrideParameters: |
+                -projectName "$(projectName)" 
+                -environment "staging" 
+                -administratorLogin "$(sqlAdminUsername)" 
+                -administratorLoginPassword "$(sqlAdminPassword)"
+              deploymentMode: 'Incremental'
+              deploymentName: 'deploy-staging-$(Build.BuildId)'
+
+# =====================================================
+# PRODUCTION DEPLOYMENT STAGE
+# =====================================================
+- stage: DeployProduction
+  displayName: 'Deploy to Production'
+  dependsOn: DeployStaging
+  condition: and(succeeded(), eq(variables['Build.SourceBranch'], 'refs/heads/main'))
+  jobs:
+  - deployment: DeployInfraProd
+    displayName: 'Deploy Infrastructure to Production'
+    pool:
+      vmImage: $(vmImageName)
+    environment: 'Production'
+    variables:
+    - group: DataPlatform-Production
+    
+    strategy:
+      runOnce:
+        deploy:
+          steps:
+          - checkout: self
+            clean: true
+
+          - task: ManualValidation@0
+            displayName: 'Manual Approval for Production'
+            inputs:
+              notifyUsers: '$(approverEmails)'
+              instructions: 'Please review the deployment plan and approve for production deployment.'
+              timeoutInMinutes: 1440 # 24 hours
+
+          - task: AzureResourceManagerTemplateDeployment@3
+            displayName: 'Deploy Data Platform to Production'
+            inputs:
+              deploymentScope: 'Resource Group'
+              azureResourceManagerConnection: '$(azureServiceConnectionProd)'
+              action: 'Create Or Update Resource Group'
+              resourceGroupName: '$(prodResourceGroupName)'
+              location: '$(azureLocation)'
+              templateLocation: 'Linked artifact'
+              csmFile: 'DevOps Solution/Azure/arm-templates/azure-data-platform.json'
+              csmParametersFile: 'DevOps Solution/Azure/arm-templates/parameters-prod.json'
+              overrideParameters: |
+                -projectName "$(projectName)" 
+                -environment "prod" 
+                -administratorLogin "$(sqlAdminUsername)" 
+                -administratorLoginPassword "$(sqlAdminPassword)"
+              deploymentMode: 'Incremental'
+              deploymentName: 'deploy-prod-$(Build.BuildId)'
+
+          - task: AzureCLI@2
+            displayName: 'Post-Deployment Validation'
+            inputs:
+              azureSubscription: '$(azureServiceConnectionProd)'
+              scriptType: 'bash'
+              scriptLocation: 'inlineScript'
+              inlineScript: |
+                # Run production health checks
+                echo "Running production health checks..."
+                
+                # Check all critical resources
+                ./scripts/validate-deployment.sh $(prodResourceGroupName)
+                
+                # Send notification of successful deployment
+                echo "Production deployment completed successfully"
+
+          - task: PublishPipelineArtifact@1
+            displayName: 'Publish Production Deployment Report'
+            inputs:
+              targetPath: '$(System.DefaultWorkingDirectory)/deployment-report.html'
+              artifact: 'production-deployment-report'
+
+# =====================================================
+# CLEANUP STAGE (Optional)
+# =====================================================
+- stage: Cleanup
+  displayName: 'Cleanup Development Resources'
+  dependsOn: DeployProduction
+  condition: and(succeeded(), eq(variables['cleanupAfterDeployment'], 'true'))
+  jobs:
+  - job: CleanupDev
+    displayName: 'Cleanup Development Environment'
+    pool:
+      vmImage: $(vmImageName)
+    
+    steps:
+    - task: AzureCLI@2
+      displayName: 'Remove Development Resources'
+      inputs:
+        azureSubscription: '$(azureServiceConnectionDev)'
+        scriptType: 'bash'
+        scriptLocation: 'inlineScript'
+        inlineScript: |
+          # Only cleanup if explicitly requested
+          if [ "$(cleanupAfterDeployment)" == "true" ]; then
+            echo "Cleaning up development resources..."
+            az group delete --name $(devResourceGroupName) --yes --no-wait
+          else
+            echo "Cleanup skipped - cleanupAfterDeployment is not set to true"
+          fi
