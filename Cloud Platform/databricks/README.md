@@ -21,31 +21,36 @@ Data Sources → Bronze Layer → Silver Layer → Gold Layer → ML Models & An
 - **Unity Catalog**: Data governance and lineage
 - **Databricks SQL**: Business intelligence and visualization
 
+## Directory Structure
+
+```
+databricks/
+├── README.md                          # This documentation
+├── Medallion_layers/                  # Medallion architecture implementation
+│   ├── 01_data_ingestion_bronze.py  # Raw data ingestion (Bronze layer)
+│   ├── 02_data_quality_silver.py    # Data validation and cleaning (Silver layer)
+│   └── 03_business_intelligence_gold.py # Business aggregations (Gold layer)
+└── dlt_for_kafka/                    # Delta Live Tables with Kafka
+    ├── README.md                     # DLT documentation
+    └── dlt_pipeline.py               # Delta Live Tables pipeline
+```
+
 ## Notebooks Overview
 
-### 1. Data Ingestion & Bronze Layer
-- `01_data_ingestion_bronze.py` - Raw data ingestion patterns
-- Schema inference and evolution
-- Streaming data ingestion from multiple sources
+### 1. Medallion Architecture (`Medallion_layers/`)
+- `01_data_ingestion_bronze.py` - Raw data ingestion patterns with schema evolution
+- `02_data_quality_silver.py` - Data validation, cleaning, and quality checks
+- `03_business_intelligence_gold.py` - Business aggregations and KPIs
 
-### 2. Data Quality & Silver Layer  
-- `02_data_quality_silver.py` - Data validation and cleaning
-- Expectation-based quality checks
-- Change data capture (CDC) processing
+### 2. Delta Live Tables (`dlt_for_kafka/`)
+- `dlt_pipeline.py` - Real-time streaming with Kafka integration
+- Demonstrates continuous data processing with DLT
 
-### 3. Business Intelligence & Gold Layer
-- `03_business_intelligence_gold.py` - Aggregations and KPIs
-- Dimensional modeling for analytics
-- Real-time dashboard feeds
+**Note**: This demonstrates core Databricks data engineering patterns. The current implementation includes the medallion architecture (Bronze/Silver/Gold) and Delta Live Tables for streaming. For a comprehensive enterprise setup, additional notebooks would include:
 
-### 4. Machine Learning Pipeline
-- `04_ml_feature_engineering.py` - Feature store and engineering
-- `05_ml_model_training.py` - Model training with MLflow
-- `06_ml_model_serving.py` - Real-time model serving
-
-### 5. Advanced Analytics
-- `07_streaming_analytics.py` - Real-time streaming analytics
-- `08_graph_analytics.py` - Graph processing with GraphFrames
+- Machine Learning Pipeline (Feature engineering, model training, MLflow integration)
+- Advanced Analytics (Graph processing, streaming analytics, time series)
+- Data Governance (Unity Catalog integration, lineage tracking)
 
 ## Getting Started
 

@@ -6,17 +6,26 @@ This directory contains Infrastructure as Code (IaC) templates for deploying mod
 
 ```
 Templating/
-├── terraform/                 # Terraform configurations
-│   ├── aws/                  # AWS-specific resources
-│   ├── azure/                # Azure-specific resources
-│   ├── gcp/                  # Google Cloud Platform resources
-│   ├── multi-cloud/          # Cross-cloud deployments
-│   └── modules/              # Reusable Terraform modules
-├── arm-templates/            # Azure Resource Manager templates
-├── cloudformation/           # AWS CloudFormation templates
-├── helm-charts/              # Kubernetes Helm charts
-└── scripts/                  # Deployment and utility scripts
+├── README.md                 # This documentation
+├── jinja/                    # Jinja2 templating system
+│   ├── README.md            # Jinja2 documentation
+│   ├── examples/            # Usage examples
+│   ├── templates/           # Configuration templates
+│   ├── tools/               # Template management tools
+│   └── variables/           # Environment variables
+└── terraform/               # Terraform configurations
+    └── aws/                 # AWS-specific resources
+        ├── README.md        # AWS Terraform documentation
+        ├── examples/        # Example implementations
+        └── modules/         # Reusable Terraform modules
 ```
+
+**Note**: This demonstrates core Infrastructure as Code templating concepts. The current implementation focuses on Terraform (AWS) and Jinja2 templating. For a comprehensive enterprise setup, additional directories would include:
+
+- `arm-templates/` - Azure Resource Manager templates
+- `cloudformation/` - AWS CloudFormation templates  
+- `helm-charts/` - Kubernetes Helm charts
+- `scripts/` - Deployment and utility scripts
 
 ## Key Features
 

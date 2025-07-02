@@ -20,32 +20,17 @@ Bamboo Plans → Build Stages → Test Stages → Deploy Stages → Monitor
 ```
 Bamboo/
 ├── README.md                          # This documentation
-├── plans/                             # Bamboo plan configurations
-│   ├── data-platform-build.yaml      # Main build plan
-│   ├── infrastructure-plan.yaml      # Infrastructure deployment
-│   ├── data-pipeline-plan.yaml       # Data pipeline CI/CD
-│   └── ml-model-plan.yaml           # ML model deployment
-├── deployments/                      # Deployment project configs
-│   ├── dev-deployment.yaml          # Development deployment
-│   ├── staging-deployment.yaml      # Staging deployment
-│   └── prod-deployment.yaml         # Production deployment
-├── scripts/                          # Automation scripts
-│   ├── build-scripts/               # Build automation
-│   ├── test-scripts/                # Testing automation
-│   ├── deploy-scripts/              # Deployment automation
-│   └── monitoring-scripts/          # Health monitoring
-├── specs/                            # Bamboo Specs as Code
-│   ├── build-specs.java            # Java-based plan specifications
-│   └── deployment-specs.java       # Deployment specifications
-├── environments/                     # Environment configurations
-│   ├── development.properties      # Dev environment config
-│   ├── staging.properties          # Staging environment config
-│   └── production.properties       # Prod environment config
-└── templates/                        # Reusable templates
-    ├── stage-templates/             # Stage templates
-    ├── task-templates/              # Task templates
-    └── notification-templates/     # Notification templates
+└── plans/                             # Bamboo plan configurations
+    └── data-platform-build.yaml      # Main build plan implementation
 ```
+
+**Note**: This is a demonstration of Bamboo CI/CD concepts. The current implementation includes a basic build plan configuration. For a complete enterprise setup, additional directories would include:
+
+- `deployments/` - Deployment project configurations
+- `scripts/` - Automation and utility scripts  
+- `specs/` - Bamboo Specs as Code (Java-based)
+- `environments/` - Environment-specific configurations
+- `templates/` - Reusable plan and task templates
 
 ## Features Demonstrated
 

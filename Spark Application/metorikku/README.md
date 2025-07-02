@@ -26,24 +26,22 @@ Raw Data → Metorikku ETL Jobs → Processed Data → Business Intelligence
 
 ```
 metorikku/
-├── config/                    # Metorikku configuration files
-│   ├── ecommerce-etl.yaml   # E-commerce data processing
-│   ├── customer-360.yaml    # Customer analytics pipeline
-│   ├── realtime-events.yaml # Real-time event processing
-│   └── data-quality.yaml    # Data quality monitoring
+├── README.md                 # This documentation
+├── config/                   # Metorikku configuration files
+│   └── ecommerce-etl.yaml   # E-commerce data processing example
 ├── jdbc/                     # JDBC-based data processing
-│   ├── customer-sync.yaml   # Customer data synchronization
-│   ├── transaction-etl.yaml # Transaction processing
-│   └── dimension-load.yaml  # Dimension table loading
-├── s3/                       # S3-based data lake processing
-│   ├── raw-to-silver.yaml   # Bronze to Silver layer transformation
-│   ├── silver-to-gold.yaml  # Silver to Gold layer aggregation
-│   └── data-archival.yaml   # Data lifecycle management
-├── metrics/                  # Custom metric definitions
-├── sql/                      # SQL transformation scripts
-├── schemas/                  # Data schema definitions
-└── deployment/               # Deployment configurations
+│   └── customer-sync.yaml   # Customer data synchronization
+├── kafka/                    # Kafka streaming configurations
+└── s3/                       # S3-based data lake processing
+    └── raw-to-silver.yaml    # Bronze to Silver layer transformation
 ```
+
+**Note**: This demonstrates Metorikku configuration-driven ETL concepts. The current implementation includes basic configurations for different data sources (JDBC, S3, Kafka) and processing patterns. For a comprehensive enterprise setup, additional directories would include:
+
+- `metrics/` - Custom metric definitions and business KPIs
+- `sql/` - SQL transformation scripts and complex business logic
+- `schemas/` - Data schema definitions and validation rules
+- `deployment/` - Deployment configurations for different environments
 
 ## Key Features Demonstrated
 

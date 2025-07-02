@@ -22,34 +22,16 @@ Azure_devops/
 ├── README.md                           # This documentation
 ├── pipelines/                          # YAML pipeline definitions
 │   ├── infrastructure-pipeline.yml    # Infrastructure deployment
-│   ├── data-pipeline-ci.yml          # Data pipeline CI
-│   ├── data-pipeline-cd.yml          # Data pipeline CD
-│   ├── ml-model-pipeline.yml         # ML model deployment
-│   └── monitoring-pipeline.yml       # Health monitoring
-├── templates/                         # Reusable pipeline templates
-│   ├── build-template.yml           # Build stage template
-│   ├── test-template.yml            # Testing template
-│   ├── deploy-template.yml          # Deployment template
-│   └── validation-template.yml      # Data validation template
-├── tests/                            # Automated tests
-│   ├── unit/                        # Unit tests for data pipelines
-│   ├── integration/                 # Integration tests
-│   ├── data-quality/               # Data quality tests
-│   └── performance/                # Performance tests
-├── scripts/                         # Utility scripts
-│   ├── setup-environment.ps1       # Environment setup
-│   ├── deploy-infrastructure.ps1   # Infrastructure deployment
-│   ├── validate-deployment.ps1     # Post-deployment validation
-│   └── rollback.ps1                # Rollback procedures
-├── environments/                    # Environment configurations
-│   ├── dev.yml                     # Development environment
-│   ├── staging.yml                 # Staging environment
-│   └── prod.yml                    # Production environment
-└── policies/                       # Branch and deployment policies
-    ├── branch-policies.json        # Branch protection rules
-    ├── deployment-gates.json       # Quality gates
-    └── security-policies.json      # Security requirements
+│   └── data-pipeline-ci.yml          # Data pipeline CI/CD
 ```
+
+**Note**: This demonstrates Azure DevOps CI/CD concepts for data platforms. The current implementation includes basic pipeline definitions for infrastructure and data pipeline automation. For a comprehensive enterprise setup, additional directories would include:
+
+- `templates/` - Reusable pipeline templates for build, test, and deployment stages
+- `tests/` - Automated testing framework (unit, integration, data quality, performance)
+- `scripts/` - Utility scripts for environment setup, deployment, and rollback procedures
+- `environments/` - Environment-specific configurations (dev, staging, production)
+- `policies/` - Branch protection rules, deployment gates, and security policies
 
 ## Features Demonstrated
 

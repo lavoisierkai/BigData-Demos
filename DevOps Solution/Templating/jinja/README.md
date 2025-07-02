@@ -20,70 +20,27 @@ Configuration Templates → Variable Files → Rendered Configs → Deployment
 ```
 jinja/
 ├── README.md                        # This documentation
+├── examples/                        # Usage examples
+│   └── basic_usage.py              # Basic template rendering example
 ├── templates/                       # Jinja2 templates
-│   ├── infrastructure/             # Infrastructure templates
-│   │   ├── aws/                   # AWS-specific templates
-│   │   ├── azure/                 # Azure-specific templates
-│   │   └── multi-cloud/           # Multi-cloud templates
-│   ├── data-pipelines/             # Data pipeline templates
-│   │   ├── spark/                 # Spark configuration templates
-│   │   ├── databricks/            # Databricks templates
-│   │   └── airflow/               # Apache Airflow templates
-│   ├── monitoring/                 # Monitoring configuration
-│   │   ├── grafana/               # Grafana dashboards
-│   │   ├── prometheus/            # Prometheus configs
-│   │   └── alerts/                # Alert configurations
-│   └── deployment/                 # Deployment templates
-│       ├── kubernetes/            # K8s manifests
-│       ├── docker/                # Docker configurations
-│       └── ci-cd/                 # CI/CD pipeline configs
-├── variables/                       # Environment variables
-│   ├── environments/              # Environment-specific variables
-│   │   ├── development.yml       # Development environment
-│   │   ├── staging.yml           # Staging environment
-│   │   └── production.yml        # Production environment
-│   ├── components/                # Component-specific variables
-│   │   ├── database.yml          # Database configurations
-│   │   ├── storage.yml           # Storage configurations
-│   │   └── compute.yml           # Compute configurations
-│   └── global/                    # Global configurations
-│       ├── common.yml            # Common variables
-│       ├── regions.yml           # Regional configurations
-│       └── compliance.yml        # Compliance settings
-├── macros/                         # Reusable Jinja2 macros
-│   ├── aws_macros.j2             # AWS-specific macros
-│   ├── azure_macros.j2           # Azure-specific macros
-│   ├── security_macros.j2        # Security-related macros
-│   └── validation_macros.j2      # Validation macros
-├── filters/                        # Custom Jinja2 filters
-│   ├── __init__.py               # Filter module initialization
-│   ├── encoding_filters.py       # Encoding/decoding filters
-│   ├── validation_filters.py     # Validation filters
-│   └── transformation_filters.py # Data transformation filters
+│   └── infrastructure/             # Infrastructure templates
+│       └── aws/                    # AWS-specific templates
+│           └── data-lake.j2        # Data lake template
 ├── tools/                          # Template management tools
-│   ├── render.py                 # Template rendering tool
-│   ├── validate.py               # Configuration validation
-│   ├── diff.py                   # Configuration diff tool
-│   └── encrypt.py                # Secret encryption tool
-├── tests/                          # Template tests
-│   ├── test_templates.py         # Template rendering tests
-│   ├── test_validation.py        # Validation tests
-│   └── fixtures/                 # Test fixtures
-│       ├── test_vars.yml         # Test variables
-│       └── expected_outputs/     # Expected rendered outputs
-├── schemas/                        # Configuration schemas
-│   ├── infrastructure.schema.json # Infrastructure schema
-│   ├── pipeline.schema.json      # Data pipeline schema
-│   └── monitoring.schema.json    # Monitoring schema
-├── examples/                       # Usage examples
-│   ├── basic_usage.py           # Basic rendering example
-│   ├── advanced_usage.py        # Advanced features example
-│   └── ci_cd_integration.py     # CI/CD integration example
-└── configs/                        # Rendered configurations
-    ├── development/              # Development configs
-    ├── staging/                  # Staging configs
-    └── production/               # Production configs
+│   └── render.py                   # Template rendering tool
+└── variables/                      # Environment variables
+    └── environments/               # Environment-specific variables
+        ├── development.yml         # Development environment
+        └── production.yml          # Production environment
 ```
+
+**Note**: This demonstrates core Jinja2 templating concepts for configuration management. The current implementation includes basic infrastructure templating and environment management. For a comprehensive enterprise setup, additional directories would include:
+
+- `macros/` - Reusable Jinja2 macros for complex logic
+- `filters/` - Custom Jinja2 filters for data transformation
+- `tests/` - Template testing and validation framework
+- `schemas/` - Configuration schema validation
+- `configs/` - Rendered configuration outputs
 
 ## Features Demonstrated
 

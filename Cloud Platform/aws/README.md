@@ -60,183 +60,33 @@ AWS Data Platform Ecosystem
 ```
 aws/
 ├── README.md                          # This comprehensive guide
-├── data-lake/                         # Data lake architecture
-│   ├── infrastructure/                # CloudFormation/CDK templates
-│   │   ├── core-infrastructure.yaml   # Core S3, IAM, networking
-│   │   ├── glue-catalog.yaml          # Glue Data Catalog setup
-│   │   ├── lake-formation.yaml        # Lake Formation governance
-│   │   ├── athena-workgroups.yaml     # Athena query optimization
-│   │   └── monitoring-stack.yaml      # CloudWatch monitoring
-│   ├── medallion-architecture/        # Bronze/Silver/Gold implementation
-│   │   ├── bronze-layer/              # Raw data ingestion
-│   │   ├── silver-layer/              # Cleaned and validated data
-│   │   └── gold-layer/                # Business-ready datasets
-│   ├── data-governance/               # Data governance framework
-│   │   ├── lake-formation-policies/   # Fine-grained access control
-│   │   ├── data-quality-rules/        # Data quality validation
-│   │   ├── lineage-tracking/          # Data lineage automation
-│   │   └── compliance-automation/     # Regulatory compliance
-│   └── cost-optimization/             # Cost optimization strategies
-│       ├── lifecycle-policies/        # S3 lifecycle management
-│       ├── storage-optimization/      # Storage class optimization
-│       └── query-optimization/        # Query performance tuning
-├── glue-jobs/                         # AWS Glue ETL scripts
-│   ├── streaming-etl/                 # Real-time data processing
-│   │   ├── kinesis-to-s3.py          # Streaming data ingestion
-│   │   ├── real-time-enrichment.py   # Data enrichment pipeline
-│   │   ├── change-data-capture.py    # CDC processing
-│   │   └── streaming-aggregations.py # Real-time aggregations
-│   ├── batch-etl/                     # Batch data processing
-│   │   ├── ecommerce-etl-job.py      # E-commerce data pipeline
-│   │   ├── log-processing.py         # Log data processing
-│   │   ├── data-quality-validation.py # Data quality checks
-│   │   └── incremental-processing.py # Incremental data loads
-│   ├── data-catalog/                  # Data catalog automation
-│   │   ├── schema-evolution.py       # Schema evolution handling
-│   │   ├── metadata-extraction.py    # Automatic metadata extraction
-│   │   └── catalog-optimization.py   # Catalog performance optimization
-│   └── ml-data-prep/                  # ML data preparation
-│       ├── feature-engineering.py    # Feature engineering pipeline
-│       ├── data-preprocessing.py     # ML data preprocessing
-│       └── training-data-prep.py     # Training dataset preparation
-├── emr-jobs/                          # EMR Spark applications
-│   ├── batch-processing/              # Large-scale batch processing
-│   │   ├── realtime-analytics-spark-job.py # Real-time analytics
-│   │   ├── data-lake-etl.py          # Comprehensive ETL pipeline
-│   │   ├── machine-learning-training.py # ML model training
-│   │   └── data-quality-framework.py # Data quality framework
-│   ├── streaming-analytics/           # Real-time streaming
-│   │   ├── kafka-spark-streaming.py  # Kafka integration
-│   │   ├── kinesis-spark-processing.py # Kinesis integration
-│   │   ├── real-time-ml-scoring.py   # Real-time ML inference
-│   │   └── event-driven-processing.py # Event-driven analytics
-│   ├── optimization/                  # Performance optimization
-│   │   ├── spark-tuning-examples.py  # Spark performance tuning
-│   │   ├── memory-optimization.py    # Memory usage optimization
-│   │   └── cost-optimization.py      # Cost optimization strategies
-│   └── advanced-analytics/            # Advanced analytics patterns
-│       ├── graph-analytics.py        # Graph processing with GraphX
-│       ├── time-series-analysis.py   # Time series analytics
-│       ├── text-analytics.py         # NLP and text processing
-│       └── recommendation-engine.py  # Recommendation systems
-├── kinesis-analytics/                 # Real-time stream processing
-│   ├── applications/                  # Kinesis Analytics applications
-│   │   ├── real-time-dashboard.sql   # Real-time dashboard queries
-│   │   ├── anomaly-detection.sql     # Real-time anomaly detection
-│   │   ├── fraud-detection.sql       # Fraud detection pipeline
-│   │   └── iot-analytics.sql         # IoT data processing
-│   ├── flink-applications/            # Apache Flink applications
-│   │   ├── complex-event-processing.py # Complex event processing
-│   │   ├── session-analytics.py      # Session-based analytics
-│   │   └── pattern-detection.py      # Pattern detection algorithms
-│   └── stream-processing-patterns/    # Common streaming patterns
-│       ├── windowing-operations.sql   # Window functions
-│       ├── join-patterns.sql          # Stream joins
-│       └── aggregation-patterns.sql   # Stream aggregations
-├── lambda-functions/                  # Serverless data processing
-│   ├── data-ingestion/                # Data ingestion functions
-│   │   ├── api-data-collector.py     # API data collection
-│   │   ├── file-processor.py         # File processing automation
-│   │   ├── real-time-validator.py    # Real-time data validation
-│   │   └── error-handler.py          # Error handling and retry
-│   ├── data-transformation/           # Data transformation functions
-│   │   ├── json-flattener.py         # JSON data flattening
-│   │   ├── data-enrichment.py        # Data enrichment pipeline
-│   │   ├── format-converter.py       # Data format conversion
-│   │   └── schema-validator.py       # Schema validation
-│   ├── machine-learning/              # ML-related functions
-│   │   ├── model-inference.py        # Real-time model inference
-│   │   ├── feature-calculation.py    # Feature calculation
-│   │   ├── data-drift-detector.py    # Data drift monitoring
-│   │   └── model-monitoring.py       # Model performance monitoring
-│   └── automation/                    # Automation functions
-│       ├── job-scheduler.py          # Job scheduling automation
-│       ├── cost-optimizer.py         # Automated cost optimization
-│       ├── security-monitor.py       # Security monitoring
-│       └── compliance-checker.py     # Compliance validation
-├── sagemaker/                         # Machine learning platform
-│   ├── notebooks/                     # Jupyter notebooks
-│   │   ├── exploratory-analysis/     # Data exploration
-│   │   ├── model-development/        # Model development
-│   │   ├── feature-engineering/      # Feature engineering
-│   │   └── model-evaluation/         # Model evaluation
-│   ├── training-jobs/                 # Training job configurations
-│   │   ├── built-in-algorithms/      # Built-in algorithm usage
-│   │   ├── custom-algorithms/        # Custom algorithm implementation
-│   │   ├── distributed-training/     # Distributed training setup
-│   │   └── hyperparameter-tuning/    # Hyperparameter optimization
-│   ├── endpoints/                     # Model deployment
-│   │   ├── real-time-inference/      # Real-time endpoints
-│   │   ├── batch-transform/          # Batch inference
-│   │   ├── multi-model-endpoints/    # Multi-model hosting
-│   │   └── serverless-inference/     # Serverless inference
-│   ├── pipelines/                     # ML pipeline automation
-│   │   ├── training-pipeline.py      # Training pipeline
-│   │   ├── inference-pipeline.py     # Inference pipeline
-│   │   ├── data-processing-pipeline.py # Data processing pipeline
-│   │   └── model-monitoring-pipeline.py # Model monitoring
-│   └── mlops/                         # MLOps implementation
-│       ├── ci-cd-ml-pipeline/        # CI/CD for ML models
-│       ├── model-registry/           # Model versioning
-│       ├── feature-store/            # Feature store implementation
-│       └── model-governance/         # Model governance framework
-├── quicksight/                        # Business intelligence
-│   ├── datasets/                      # QuickSight dataset definitions
-│   ├── dashboards/                    # Dashboard templates
-│   ├── analyses/                      # Analysis templates
-│   └── embedded-analytics/           # Embedded analytics setup
-├── athena/                            # Serverless SQL analytics
-│   ├── queries/                       # SQL query library
-│   │   ├── performance-optimized/    # Performance-optimized queries
-│   │   ├── cost-optimized/           # Cost-optimized queries
-│   │   ├── complex-analytics/        # Complex analytical queries
-│   │   └── data-quality/             # Data quality queries
-│   ├── workgroups/                    # Athena workgroup configs
-│   ├── saved-queries/                 # Saved query templates
-│   └── optimization/                  # Query optimization techniques
-├── redshift/                          # Data warehouse integration
-│   ├── cluster-configurations/        # Cluster setup
-│   ├── data-loading/                  # Data loading strategies
-│   ├── query-optimization/            # Query performance tuning
-│   └── integration-patterns/          # Integration with data lake
-├── opensearch/                        # Search and analytics
-│   ├── index-templates/               # Index configuration
-│   ├── data-pipelines/                # Data ingestion pipelines
-│   ├── dashboards/                    # Kibana dashboard configs
-│   └── anomaly-detection/             # Anomaly detection setup
-├── security/                          # Security implementation
-│   ├── iam-policies/                  # IAM policy templates
-│   ├── lake-formation/                # Lake Formation security
-│   ├── encryption/                    # Encryption configurations
-│   ├── network-security/              # VPC and network security
-│   └── compliance/                    # Compliance frameworks
-├── monitoring/                        # Monitoring and observability
-│   ├── cloudwatch/                    # CloudWatch configurations
-│   ├── x-ray/                         # Distributed tracing
-│   ├── custom-metrics/                # Custom metrics implementation
-│   └── alerting/                      # Alert configurations
-├── automation/                        # Infrastructure automation
-│   ├── cdk-stacks/                    # AWS CDK implementations
-│   ├── terraform/                     # Terraform configurations
-│   ├── cloudformation/                # CloudFormation templates
-│   └── ci-cd-pipelines/               # CI/CD automation
-├── sample-data/                       # Sample datasets
-│   ├── ecommerce/                     # E-commerce sample data
-│   ├── iot-sensors/                   # IoT sensor data
-│   ├── web-logs/                      # Web server logs
-│   ├── financial/                     # Financial transaction data
-│   └── generate-sample-data.py        # Data generation scripts
-├── scripts/                           # Utility scripts
-│   ├── deployment/                    # Deployment automation
-│   ├── data-migration/                # Data migration tools
-│   ├── performance-testing/           # Performance testing tools
-│   └── cost-analysis/                 # Cost analysis utilities
-└── documentation/                     # Comprehensive documentation
-    ├── architecture/                  # Architecture documentation
-    ├── best-practices/                # AWS best practices
-    ├── troubleshooting/               # Troubleshooting guides
-    └── tutorials/                     # Step-by-step tutorials
+├── eks/                               # EKS (Kubernetes) implementations
+│   ├── README.md                     # EKS documentation
+│   └── data-platform/               # Data platform on Kubernetes
+│       └── spark-operator/          # Spark Operator deployment
+│           ├── operator-deployment.yaml # Spark operator setup
+│           └── spark-applications/   # Spark application examples
+│               └── etl-pipeline.yaml # ETL pipeline on Kubernetes
+├── emr/                              # EMR cluster configurations
+│   └── README.md                     # EMR documentation and examples
+├── emr-jobs/                         # EMR Spark applications
+│   └── realtime-analytics-spark-job.py # Real-time analytics job
+├── glue-jobs/                        # AWS Glue ETL scripts
+│   └── ecommerce-etl-job.py         # E-commerce data pipeline
+├── infrastructure/                   # Infrastructure templates
+│   └── data-lake-stack.yaml         # CloudFormation data lake template
+└── sample-data/                      # Sample datasets and generators
+    └── generate-sample-data.py      # Data generation scripts
 ```
+
+**Note**: This demonstrates core AWS data platform concepts with practical implementations. The current structure includes EKS-based data platforms, EMR processing, Glue ETL, and infrastructure templates. For a comprehensive enterprise data platform, additional directories would include:
+
+- `lambda-functions/` - Serverless data processing functions
+- `kinesis-analytics/` - Real-time stream processing applications
+- `sagemaker/` - Machine learning platform implementations
+- `athena/` - Serverless SQL analytics queries and optimizations
+- `security/` - Security implementations and IAM policies
+- `monitoring/` - CloudWatch monitoring and alerting configurations
 
 ## Key Implementation Highlights
 
