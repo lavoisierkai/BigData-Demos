@@ -24,58 +24,173 @@ The BigData-Demos repository provides **production-ready examples** of:
 
 ## 🏗️ Architecture Overview
 
+### Multi-Cloud Data Platform Architecture
+
 ```mermaid
 graph TB
-    subgraph "Data Sources"
-        A[Operational DBs]
-        B[APIs & Files]
-        C[Streaming Events]
-        D[IoT Sensors]
+    subgraph "🌍 Multi-Cloud Data Sources"
+        A[📊 Operational DBs<br/>PostgreSQL, MySQL]
+        B[🔌 REST APIs<br/>Microservices, SaaS]
+        C[⚡ Streaming Events<br/>Kafka, Event Hubs]
+        D[🏭 IoT Sensors<br/>Industrial, Mobile]
+        E[📁 File Systems<br/>CSV, JSON, Parquet]
     end
     
-    subgraph "Ingestion Layer"
-        E[AWS Glue]
-        F[Azure Data Factory]
-        G[Kafka Streams]
+    subgraph "📥 Ingestion & ETL Layer"
+        F[🔶 AWS Glue<br/>Serverless ETL]
+        G[🔵 Azure Data Factory<br/>Hybrid Integration]
+        H[🟡 Kafka Connect<br/>Real-time Streaming]
+        I[⚙️ Custom APIs<br/>REST/GraphQL]
     end
     
-    subgraph "Storage Layer"
-        H[S3 Data Lake]
-        I[Azure Data Lake]
-        J[Delta Lake]
+    subgraph "🗄️ Storage Layer - Medallion Architecture"
+        subgraph "🥉 Bronze Layer (Raw)"
+            J[🪣 S3 Raw Data<br/>JSON, CSV, Avro]
+            K[💾 Azure Data Lake<br/>Hierarchical Storage]
+            L[📦 Delta Lake Bronze<br/>Schema Evolution]
+        end
+        
+        subgraph "🥈 Silver Layer (Refined)"
+            M[🪣 S3 Cleaned Data<br/>Parquet, Optimized]
+            N[💾 Azure SQL Database<br/>Structured Data]
+            O[📦 Delta Lake Silver<br/>Quality Validated]
+        end
+        
+        subgraph "🥇 Gold Layer (Business Ready)"
+            P[🪣 S3 Analytics Data<br/>Star Schema]
+            Q[💾 Azure Synapse<br/>Data Warehouse]
+            R[📦 Delta Lake Gold<br/>ML Features]
+        end
     end
     
-    subgraph "Processing Layer"
-        K[EMR/Spark]
-        L[Azure Functions]
-        M[Databricks]
-        N[Metorikku ETL]
+    subgraph "⚡ Processing & Compute Layer"
+        S[🔶 EMR Clusters<br/>Spark, Hadoop]
+        T[🔵 Azure Functions<br/>Serverless Compute]
+        U[🔴 Databricks<br/>Unified Analytics]
+        V[⚡ Metorikku<br/>Config-driven ETL]
     end
     
-    subgraph "Serving Layer"
-        O[Athena]
-        P[Power BI]
-        Q[ML Models]
-        R[APIs]
+    subgraph "📊 Analytics & ML Layer"
+        W[🔍 Amazon Athena<br/>Serverless SQL]
+        X[📈 Power BI<br/>Business Intelligence]
+        Y[🤖 MLflow Models<br/>ML Lifecycle]
+        Z[🌐 REST APIs<br/>Model Serving]
     end
     
-    A --> E
-    B --> F
-    C --> G
-    D --> E
+    subgraph "👥 Consumers"
+        AA[📱 Business Users<br/>Dashboards, Reports]
+        BB[🔬 Data Scientists<br/>Jupyter, R Studio]
+        CC[💻 Applications<br/>Real-time APIs]
+        DD[🏢 External Systems<br/>Partner APIs]
+    end
+
+    %% Data Sources to Ingestion
+    A --> F
+    A --> G
+    B --> I
+    C --> H
+    D --> H
+    E --> F
+    E --> G
     
-    E --> H
-    F --> I
-    G --> J
+    %% Ingestion to Bronze Storage
+    F --> J
+    F --> L
+    G --> K
+    G --> L
+    H --> L
+    I --> J
+    I --> K
     
-    H --> K
-    I --> L
-    J --> M
+    %% Bronze to Silver Processing
+    J --> S
+    K --> T
+    L --> U
     
-    K --> O
-    L --> P
-    M --> Q
-    N --> R
+    %% Silver Processing and Storage
+    S --> M
+    S --> O
+    T --> N
+    T --> O
+    U --> O
+    U --> R
+    V --> M
+    V --> O
+    
+    %% Silver to Gold Processing
+    M --> S
+    N --> T
+    O --> U
+    
+    %% Gold Storage
+    S --> P
+    S --> R
+    T --> Q
+    T --> R
+    U --> R
+    
+    %% Analytics and ML
+    P --> W
+    Q --> X
+    R --> Y
+    P --> Z
+    Q --> Z
+    R --> Z
+    
+    %% Serving to Consumers
+    W --> AA
+    X --> AA
+    Y --> BB
+    Y --> CC
+    Z --> CC
+    Z --> DD
+
+    classDef aws fill:#ff9900,stroke:#232f3e,stroke-width:2px,color:#fff
+    classDef azure fill:#0078d4,stroke:#fff,stroke-width:2px,color:#fff
+    classDef databricks fill:#ff3621,stroke:#fff,stroke-width:2px,color:#fff
+    classDef bronze fill:#cd7f32,stroke:#000,stroke-width:2px,color:#fff
+    classDef silver fill:#c0c0c0,stroke:#000,stroke-width:2px,color:#000
+    classDef gold fill:#ffd700,stroke:#000,stroke-width:2px,color:#000
+    
+    class F,J,M,P,S,W aws
+    class G,K,N,Q,T,X azure
+    class L,O,R,U,Y databricks
+    class J,K,L bronze
+    class M,N,O silver
+    class P,Q,R gold
+```
+
+### 📈 Data Flow Patterns
+
+```mermaid
+flowchart LR
+    subgraph "🔄 Batch Processing"
+        A1[Hourly ETL] --> A2[Daily Aggregation] --> A3[Weekly Reports]
+    end
+    
+    subgraph "⚡ Real-time Processing"
+        B1[Event Streams] --> B2[Stream Processing] --> B3[Live Dashboards]
+    end
+    
+    subgraph "🔗 Lambda Architecture"
+        C1[Batch Layer<br/>High Throughput] 
+        C2[Speed Layer<br/>Low Latency]
+        C3[Serving Layer<br/>Unified View]
+        
+        C1 --> C3
+        C2 --> C3
+    end
+    
+    subgraph "🏛️ Medallion Architecture"
+        D1[🥉 Bronze<br/>Raw Data<br/>Schema-on-Read] 
+        D2[🥈 Silver<br/>Validated Data<br/>Business Rules]
+        D3[🥇 Gold<br/>Business Ready<br/>Analytics/ML]
+        
+        D1 --> D2 --> D3
+    end
+
+    classDef pattern fill:#e1f5fe,stroke:#01579b,stroke-width:2px
+    class A1,A2,A3,B1,B2,B3,C1,C2,C3,D1,D2,D3 pattern
 ```
 
 ## 📁 Repository Structure
@@ -180,6 +295,78 @@ terraform plan -var-file="environments/dev.tfvars"
 terraform apply
 ```
 
+## 🚀 Deployment Patterns
+
+### CI/CD Pipeline Flow
+
+```mermaid
+gitGraph
+    commit id: "Feature Branch"
+    branch feature/data-pipeline
+    checkout feature/data-pipeline
+    commit id: "Add dbt models"
+    commit id: "Add Spark jobs"
+    commit id: "Add tests"
+    checkout main
+    merge feature/data-pipeline
+    commit id: "Deploy to Dev" type: HIGHLIGHT
+    commit id: "Integration Tests"
+    commit id: "Deploy to Staging" type: HIGHLIGHT
+    commit id: "UAT & Performance"
+    commit id: "Deploy to Prod" type: HIGHLIGHT
+```
+
+### Multi-Environment Architecture
+
+```mermaid
+graph TB
+    subgraph "🔧 Development Environment"
+        DEV1[💻 Local Development<br/>Docker Compose]
+        DEV2[☁️ Dev Cloud Resources<br/>Smaller Scale]
+        DEV3[🧪 Unit Tests<br/>Data Quality Checks]
+    end
+    
+    subgraph "🔬 Staging Environment"
+        STG1[📊 Staging Data Lake<br/>Production-like Scale]
+        STG2[🔄 Integration Tests<br/>End-to-end Pipelines]
+        STG3[📈 Performance Tests<br/>Load & Stress Testing]
+    end
+    
+    subgraph "🏭 Production Environment"
+        PROD1[🌐 Production Data Lake<br/>Full Scale]
+        PROD2[📊 Live Dashboards<br/>Real-time Monitoring]
+        PROD3[🚨 Alerting<br/>24/7 Operations]
+    end
+    
+    subgraph "🔒 Security & Compliance"
+        SEC1[🔐 Encryption<br/>At Rest & In Transit]
+        SEC2[👤 Identity Management<br/>RBAC & SSO]
+        SEC3[📋 Audit Logging<br/>Compliance Reports]
+    end
+
+    DEV1 --> DEV2 --> DEV3
+    DEV3 --> STG1 --> STG2 --> STG3
+    STG3 --> PROD1 --> PROD2 --> PROD3
+    
+    SEC1 --> DEV2
+    SEC1 --> STG1
+    SEC1 --> PROD1
+    SEC2 --> DEV2
+    SEC2 --> STG1
+    SEC2 --> PROD1
+    SEC3 --> PROD3
+
+    classDef dev fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef staging fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef prod fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef security fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class DEV1,DEV2,DEV3 dev
+    class STG1,STG2,STG3 staging
+    class PROD1,PROD2,PROD3 prod
+    class SEC1,SEC2,SEC3 security
+```
+
 ## 💡 Use Cases & Demos
 
 ### 1. 🛒 E-commerce Analytics Platform
@@ -224,28 +411,130 @@ terraform apply
 
 ## 🛠️ Technologies Demonstrated
 
-### Cloud Platforms
-- **AWS**: S3, Glue, EMR, Athena, Lambda, CloudFormation
-- **Azure**: Data Factory, SQL Database, Data Lake, Key Vault, ARM Templates
-- **Multi-Cloud**: Terraform, Kubernetes, Docker containerization
+### Technology Integration Matrix
 
-### Big Data & Analytics
-- **Apache Spark**: Distributed data processing and analytics
-- **Delta Lake**: ACID transactions and time travel for data lakes
-- **Databricks**: Unified analytics platform for big data and ML
-- **Metorikku**: Configuration-driven Spark ETL framework
+```mermaid
+graph LR
+    subgraph "☁️ Cloud Platforms"
+        AWS[🔶 AWS<br/>S3, EMR, Glue, Athena]
+        AZ[🔵 Azure<br/>ADF, SQL DB, Data Lake]
+        DB[🔴 Databricks<br/>Delta Lake, MLflow]
+    end
+    
+    subgraph "🔧 Processing Engines"
+        SPARK[⚡ Apache Spark<br/>Distributed Computing]
+        DBT[🗂️ dbt<br/>SQL Transformations]
+        KAFKA[🌊 Kafka<br/>Stream Processing]
+        ETL[🔄 Metorikku<br/>Config-driven ETL]
+    end
+    
+    subgraph "🏗️ Infrastructure"
+        TF[🟣 Terraform<br/>Multi-cloud IaC]
+        ARM[🔷 ARM Templates<br/>Azure Native]
+        CF[🟠 CloudFormation<br/>AWS Native]
+        K8S[⚙️ Kubernetes<br/>Container Orchestration]
+    end
+    
+    subgraph "🔄 DevOps & CI/CD"
+        GIT[🌿 Git<br/>Version Control]
+        CICD[🚀 CI/CD Pipelines<br/>Azure DevOps, GitHub]
+        DOCK[🐳 Docker<br/>Containerization]
+        MON[📊 Monitoring<br/>CloudWatch, Azure Monitor]
+    end
+    
+    subgraph "🤖 ML & Analytics"
+        MLF[🧪 MLflow<br/>ML Lifecycle]
+        PBI[📈 Power BI<br/>Business Intelligence]
+        JUP[📓 Jupyter<br/>Data Science]
+        API[🌐 REST APIs<br/>Model Serving]
+    end
 
-### Machine Learning & AI
-- **MLflow**: ML experiment tracking and model versioning
-- **Azure ML**: Cloud-native machine learning platform
-- **Real-time Inference**: Model serving and API deployment
-- **Feature Engineering**: Advanced data preparation techniques
+    AWS --> SPARK
+    AWS --> ETL
+    AZ --> DBT
+    AZ --> KAFKA
+    DB --> SPARK
+    DB --> MLF
+    
+    TF --> AWS
+    TF --> AZ
+    ARM --> AZ
+    CF --> AWS
+    K8S --> DOCK
+    
+    SPARK --> MLF
+    DBT --> PBI
+    KAFKA --> SPARK
+    ETL --> SPARK
+    
+    GIT --> CICD
+    CICD --> DOCK
+    DOCK --> K8S
+    MON --> AWS
+    MON --> AZ
 
-### DevOps & Infrastructure
-- **Terraform**: Multi-cloud infrastructure as code
-- **CI/CD Pipelines**: Automated testing and deployment
-- **Monitoring**: CloudWatch, Azure Monitor, custom dashboards
-- **Security**: Encryption, IAM, network isolation, compliance
+    classDef cloud fill:#e3f2fd,stroke:#1976d2,stroke-width:2px
+    classDef process fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef infra fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef devops fill:#e8f5e8,stroke:#388e3c,stroke-width:2px
+    classDef ml fill:#fce4ec,stroke:#c2185b,stroke-width:2px
+    
+    class AWS,AZ,DB cloud
+    class SPARK,DBT,KAFKA,ETL process
+    class TF,ARM,CF,K8S infra
+    class GIT,CICD,DOCK,MON devops
+    class MLF,PBI,JUP,API ml
+```
+
+### Platform-Specific Capabilities
+
+| Platform | Storage | Processing | Analytics | ML/AI | Monitoring |
+|----------|---------|------------|-----------|-------|------------|
+| **🔶 AWS** | S3 Data Lake<br/>Glacier Archive | EMR Spark<br/>Glue ETL<br/>EKS Jobs | Athena<br/>QuickSight | SageMaker<br/>Comprehend | CloudWatch<br/>X-Ray |
+| **🔵 Azure** | Data Lake Gen2<br/>SQL Database | Data Factory<br/>Functions<br/>Synapse | Power BI<br/>Analysis Services | ML Studio<br/>Cognitive Services | Monitor<br/>Application Insights |
+| **🔴 Databricks** | Delta Lake<br/>Unity Catalog | Spark Clusters<br/>Delta Live Tables | SQL Analytics<br/>Notebooks | MLflow<br/>AutoML<br/>Feature Store | Cluster Metrics<br/>Job Monitoring |
+
+### Data Architecture Patterns
+
+```
+🏛️ PATTERN IMPLEMENTATIONS ACROSS PLATFORMS
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    🥇 MEDALLION ARCHITECTURE                    │
+├─────────────────────────────────────────────────────────────────┤
+│  AWS Implementation    │  Azure Implementation  │  Databricks    │
+│  ┌─────────────────┐   │  ┌─────────────────┐   │  ┌─────────────┐ │
+│  │ 🥉 S3 Bronze    │   │  │ 🥉 Raw Zone     │   │  │ 🥉 Bronze   │ │
+│  │ • JSON/CSV      │   │  │ • Landing       │   │  │ • Auto      │ │
+│  │ • Partitioned   │   │  │ • Incremental   │   │  │   Loader    │ │
+│  └─────────────────┘   │  └─────────────────┘   │  └─────────────┘ │
+│  ┌─────────────────┐   │  ┌─────────────────┐   │  ┌─────────────┐ │
+│  │ 🥈 S3 Silver    │   │  │ 🥈 Refined      │   │  │ 🥈 Silver   │ │
+│  │ • Parquet       │   │  │ • Validated     │   │  │ • DQ Rules  │ │
+│  │ • Optimized     │   │  │ • Cleansed      │   │  │ • Schema    │ │
+│  └─────────────────┘   │  └─────────────────┘   │  └─────────────┘ │
+│  ┌─────────────────┐   │  ┌─────────────────┐   │  ┌─────────────┐ │
+│  │ 🥇 S3 Gold      │   │  │ 🥇 Curated      │   │  │ 🥇 Gold     │ │
+│  │ • Star Schema   │   │  │ • Analytics     │   │  │ • ML Ready  │ │
+│  │ • Aggregated    │   │  │ • Dimensional   │   │  │ • Features  │ │
+│  └─────────────────┘   │  └─────────────────┘   │  └─────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────────┐
+│                    ⚡ LAMBDA ARCHITECTURE                       │
+├─────────────────────────────────────────────────────────────────┤
+│                                                                 │
+│  📊 BATCH LAYER           ⚡ SPEED LAYER         🎯 SERVING      │
+│                                                                 │
+│  High Throughput          Low Latency            Unified View   │
+│  Historical Accuracy      Real-time Approx       Query Layer   │
+│                                                                 │
+│  • S3 + EMR              • Kinesis + Lambda      • Athena      │
+│  • ADLS + Synapse        • Event Hub + Stream    • Power BI    │
+│  • Delta + Spark         • Delta Live Tables     • Dashboards  │
+│                                                                 │
+└─────────────────────────────────────────────────────────────────┘
+```
 
 ## 📊 Key Features
 
@@ -304,26 +593,6 @@ By exploring this repository, you'll gain expertise in:
 - [Real-time Processing Workshop](tutorials/streaming-workshop.md)
 - [Infrastructure Automation Tutorial](tutorials/iac-tutorial.md)
 
-## 🤝 Contributing
-
-We welcome contributions to improve and extend these demonstrations!
-
-### How to Contribute
-1. **Fork** the repository
-2. **Create** a feature branch (`git checkout -b feature/amazing-feature`)
-3. **Commit** your changes (`git commit -m 'Add amazing feature'`)
-4. **Push** to the branch (`git push origin feature/amazing-feature`)
-5. **Open** a Pull Request
-
-### Contribution Guidelines
-- Follow existing code style and conventions
-- Add comprehensive documentation for new features
-- Include tests for new functionality
-- Update README files as needed
-
-## 📄 License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
 ## 🔗 Resources & References
 

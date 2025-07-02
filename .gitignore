@@ -68,7 +68,6 @@ terraform.tfvars.json
 # AWS
 .aws/
 credentials
-config
 
 # Azure
 .azure/

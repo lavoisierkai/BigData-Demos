@@ -1,0 +1,414 @@
+# Metorikku E-commerce ETL Pipeline Configuration
+# ===============================================
+#
+# This configuration demonstrates a comprehensive e-commerce data processing
+# pipeline using Metorikku framework. It processes raw transaction data,
+# enriches it with customer and product information, and creates analytics-ready datasets.
+#
+# Data Flow:
+# Raw Transactions → Data Quality → Customer Enrichment → Product Enrichment → Aggregations → Output
+
+# Global configuration
+applicationName: "EcommerceETLPipeline"
+showPreviewLines: 20
+logLevel: "INFO"
+
+# Variable definitions (can be overridden at runtime)
+variables:
+  processing_date: "2024-01-15"
+  environment: "dev"
+  s3_bucket: "data-lake-demo"
+  max_records_preview: 100
+
+# Input data sources
+inputs:
+  # Raw transaction data from S3 (Bronze layer)
+  - name: raw_transactions
+    path: "s3a://${s3_bucket}/raw/transactions/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/day=${processing_date|dateFormat('dd')}/"
+    format: parquet
+    options:
+      recursiveFileLookup: "true"
+      pathGlobFilter: "*.parquet"
+
+  # Customer dimension table
+  - name: customers
+    path: "s3a://${s3_bucket}/dimensions/customers/"
+    format: delta
+    options:
+      versionAsOf: "latest"
+
+  # Product catalog
+  - name: products
+    path: "s3a://${s3_bucket}/dimensions/products/"
+    format: delta
+    options:
+      versionAsOf: "latest"
+
+  # Product categories reference
+  - name: product_categories
+    path: "s3a://${s3_bucket}/reference/product_categories/"
+    format: json
+    options:
+      multiLine: "true"
+
+  # Customer segments (from ML pipeline)
+  - name: customer_segments
+    path: "s3a://${s3_bucket}/ml/customer_segments/"
+    format: parquet
+    options:
+      mergeSchema: "true"
+
+# ETL transformation steps
+steps:
+  # Step 1: Data Quality and Validation
+  - dataFrameName: validated_transactions
+    sql: |
+      SELECT 
+        transaction_id,
+        customer_id,
+        product_id,
+        CAST(amount AS DECIMAL(10,2)) as amount,
+        CAST(quantity AS INT) as quantity,
+        transaction_timestamp,
+        DATE(transaction_timestamp) as transaction_date,
+        payment_method,
+        shipping_address,
+        promo_code,
+        channel,
+        CURRENT_TIMESTAMP() as processing_timestamp
+      FROM raw_transactions
+      WHERE 
+        -- Data quality filters
+        transaction_id IS NOT NULL 
+        AND customer_id IS NOT NULL 
+        AND product_id IS NOT NULL
+        AND amount > 0 
+        AND amount < 10000  -- Reasonable upper limit
+        AND quantity > 0 
+        AND quantity <= 50  -- Reasonable quantity limit
+        AND transaction_timestamp IS NOT NULL
+        AND DATE(transaction_timestamp) = '${processing_date}'
+      ORDER BY transaction_timestamp
+
+  # Step 2: Customer Enrichment
+  - dataFrameName: customer_enriched_transactions
+    sql: |
+      SELECT 
+        t.*,
+        c.first_name,
+        c.last_name,
+        c.email,
+        c.age,
+        c.gender,
+        c.city,
+        c.state,
+        c.country,
+        c.customer_tier,
+        c.registration_date,
+        c.last_login_date,
+        DATEDIFF('${processing_date}', c.registration_date) as customer_age_days,
+        CASE 
+          WHEN c.customer_tier = 'Platinum' THEN 1
+          WHEN c.customer_tier = 'Gold' THEN 2  
+          WHEN c.customer_tier = 'Silver' THEN 3
+          ELSE 4
+        END as customer_tier_rank,
+        CASE
+          WHEN t.amount >= 500 THEN 'High Value'
+          WHEN t.amount >= 200 THEN 'Medium Value'
+          WHEN t.amount >= 50 THEN 'Low Value'
+          ELSE 'Micro Transaction'
+        END as transaction_value_category
+      FROM validated_transactions t
+      LEFT JOIN customers c ON t.customer_id = c.customer_id
+
+  # Step 3: Product Enrichment
+  - dataFrameName: product_enriched_transactions
+    sql: |
+      SELECT 
+        t.*,
+        p.product_name,
+        p.brand,
+        p.category_id,
+        p.subcategory,
+        p.unit_price,
+        p.cost_price,
+        p.supplier_id,
+        p.weight,
+        p.dimensions,
+        pc.category_name,
+        pc.category_department,
+        -- Calculate profit metrics
+        (t.amount - (p.cost_price * t.quantity)) as gross_profit,
+        ((t.amount - (p.cost_price * t.quantity)) / t.amount * 100) as profit_margin_pct,
+        -- Product performance indicators
+        CASE 
+          WHEN t.amount / t.quantity > p.unit_price * 1.1 THEN 'Premium Price'
+          WHEN t.amount / t.quantity < p.unit_price * 0.9 THEN 'Discount Price'
+          ELSE 'Regular Price'
+        END as pricing_category
+      FROM customer_enriched_transactions t
+      LEFT JOIN products p ON t.product_id = p.product_id
+      LEFT JOIN product_categories pc ON p.category_id = pc.category_id
+
+  # Step 4: Customer Segment Enrichment
+  - dataFrameName: fully_enriched_transactions
+    sql: |
+      SELECT 
+        t.*,
+        cs.segment_name,
+        cs.segment_score,
+        cs.churn_probability,
+        cs.lifetime_value_prediction,
+        cs.next_purchase_probability,
+        cs.preferred_category,
+        -- Advanced analytics fields
+        CASE 
+          WHEN HOUR(t.transaction_timestamp) BETWEEN 9 AND 17 THEN 'Business Hours'
+          WHEN HOUR(t.transaction_timestamp) BETWEEN 18 AND 22 THEN 'Evening'
+          WHEN HOUR(t.transaction_timestamp) BETWEEN 6 AND 8 THEN 'Morning'
+          ELSE 'Night/Late'
+        END as time_of_day_category,
+        CASE 
+          WHEN DAYOFWEEK(t.transaction_date) IN (1, 7) THEN 'Weekend'
+          ELSE 'Weekday'
+        END as day_type,
+        -- Channel analysis
+        CASE 
+          WHEN t.channel = 'mobile' THEN 'Mobile'
+          WHEN t.channel = 'web' THEN 'Web'
+          WHEN t.channel = 'store' THEN 'Physical Store'
+          ELSE 'Other'
+        END as channel_category
+      FROM product_enriched_transactions t
+      LEFT JOIN customer_segments cs ON t.customer_id = cs.customer_id
+
+  # Step 5: Daily Customer Aggregations
+  - dataFrameName: daily_customer_metrics
+    sql: |
+      SELECT 
+        customer_id,
+        transaction_date,
+        COUNT(transaction_id) as daily_transaction_count,
+        SUM(amount) as daily_spent,
+        AVG(amount) as daily_avg_transaction,
+        SUM(quantity) as daily_items_purchased,
+        COUNT(DISTINCT product_id) as daily_unique_products,
+        COUNT(DISTINCT category_name) as daily_unique_categories,
+        SUM(gross_profit) as daily_gross_profit,
+        AVG(profit_margin_pct) as daily_avg_margin,
+        -- Channel preferences
+        COUNT(CASE WHEN channel_category = 'Mobile' THEN 1 END) as mobile_transactions,
+        COUNT(CASE WHEN channel_category = 'Web' THEN 1 END) as web_transactions,
+        COUNT(CASE WHEN channel_category = 'Physical Store' THEN 1 END) as store_transactions,
+        -- Time preferences  
+        COUNT(CASE WHEN time_of_day_category = 'Business Hours' THEN 1 END) as business_hour_transactions,
+        COUNT(CASE WHEN time_of_day_category = 'Evening' THEN 1 END) as evening_transactions,
+        -- First and last transaction of the day
+        MIN(transaction_timestamp) as first_transaction_time,
+        MAX(transaction_timestamp) as last_transaction_time,
+        CURRENT_TIMESTAMP() as aggregation_timestamp
+      FROM fully_enriched_transactions
+      GROUP BY customer_id, transaction_date
+
+  # Step 6: Daily Product Performance
+  - dataFrameName: daily_product_metrics
+    sql: |
+      SELECT 
+        product_id,
+        product_name,
+        brand,
+        category_name,
+        category_department,
+        transaction_date,
+        COUNT(transaction_id) as daily_sales_count,
+        SUM(quantity) as daily_quantity_sold,
+        SUM(amount) as daily_revenue,
+        AVG(amount / quantity) as daily_avg_selling_price,
+        SUM(gross_profit) as daily_product_profit,
+        AVG(profit_margin_pct) as daily_avg_margin,
+        COUNT(DISTINCT customer_id) as daily_unique_customers,
+        -- Customer segment analysis
+        COUNT(CASE WHEN segment_name = 'High Value' THEN 1 END) as high_value_customers,
+        COUNT(CASE WHEN segment_name = 'Premium' THEN 1 END) as premium_customers,
+        -- Channel distribution
+        COUNT(CASE WHEN channel_category = 'Mobile' THEN 1 END) as mobile_sales,
+        COUNT(CASE WHEN channel_category = 'Web' THEN 1 END) as web_sales,
+        COUNT(CASE WHEN channel_category = 'Physical Store' THEN 1 END) as store_sales,
+        CURRENT_TIMESTAMP() as aggregation_timestamp
+      FROM fully_enriched_transactions
+      GROUP BY 
+        product_id, product_name, brand, category_name, 
+        category_department, transaction_date
+
+  # Step 7: Daily Business KPIs
+  - dataFrameName: daily_business_kpis
+    sql: |
+      SELECT 
+        transaction_date,
+        -- Revenue metrics
+        SUM(amount) as total_revenue,
+        COUNT(transaction_id) as total_transactions,
+        COUNT(DISTINCT customer_id) as active_customers,
+        COUNT(DISTINCT product_id) as products_sold,
+        AVG(amount) as avg_order_value,
+        SUM(quantity) as total_items_sold,
+        -- Profitability
+        SUM(gross_profit) as total_gross_profit,
+        AVG(profit_margin_pct) as avg_profit_margin,
+        -- Customer segments
+        COUNT(DISTINCT CASE WHEN segment_name = 'High Value' THEN customer_id END) as high_value_active_customers,
+        COUNT(DISTINCT CASE WHEN segment_name = 'Premium' THEN customer_id END) as premium_active_customers,
+        -- Channel performance
+        SUM(CASE WHEN channel_category = 'Mobile' THEN amount ELSE 0 END) as mobile_revenue,
+        SUM(CASE WHEN channel_category = 'Web' THEN amount ELSE 0 END) as web_revenue,
+        SUM(CASE WHEN channel_category = 'Physical Store' THEN amount ELSE 0 END) as store_revenue,
+        -- Geographic insights
+        COUNT(DISTINCT country) as countries_with_sales,
+        COUNT(DISTINCT state) as states_with_sales,
+        COUNT(DISTINCT city) as cities_with_sales,
+        -- Payment methods
+        COUNT(CASE WHEN payment_method = 'credit_card' THEN 1 END) as credit_card_transactions,
+        COUNT(CASE WHEN payment_method = 'paypal' THEN 1 END) as paypal_transactions,
+        COUNT(CASE WHEN payment_method = 'bank_transfer' THEN 1 END) as bank_transfer_transactions,
+        CURRENT_TIMESTAMP() as aggregation_timestamp
+      FROM fully_enriched_transactions
+      GROUP BY transaction_date
+
+# Data quality checks
+dataQuality:
+  - dataFrameName: validated_transactions
+    checks:
+      - type: not_null
+        column: transaction_id
+        description: "Transaction ID must not be null"
+      - type: not_null
+        column: customer_id
+        description: "Customer ID must not be null"
+      - type: range
+        column: amount
+        min: 0.01
+        max: 9999.99
+        description: "Transaction amount must be between $0.01 and $9999.99"
+      - type: unique
+        column: transaction_id
+        description: "Transaction IDs must be unique"
+
+  - dataFrameName: daily_business_kpis
+    checks:
+      - type: range
+        column: total_revenue
+        min: 0
+        description: "Total revenue must be non-negative"
+      - type: range
+        column: active_customers
+        min: 1
+        description: "Must have at least 1 active customer"
+
+# Custom metrics for monitoring
+metrics:
+  - name: transactions_processed
+    dataFrameName: validated_transactions
+    aggregation: count
+    description: "Total number of transactions processed"
+
+  - name: total_revenue
+    dataFrameName: validated_transactions
+    aggregation: sum
+    column: amount
+    description: "Total revenue from processed transactions"
+
+  - name: data_quality_score
+    dataFrameName: validated_transactions
+    aggregation: custom
+    sql: |
+      SELECT 
+        ROUND(
+          (COUNT(*) * 100.0) / 
+          (SELECT COUNT(*) FROM raw_transactions WHERE DATE(transaction_timestamp) = '${processing_date}'),
+          2
+        ) as quality_percentage
+    description: "Percentage of raw transactions that passed quality checks"
+
+# Output configurations
+outputs:
+  # Enriched transactions (Silver layer)
+  - dataFrameName: fully_enriched_transactions
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/processed/transactions/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/day=${processing_date|dateFormat('dd')}/"
+      format: delta
+      mode: overwrite
+      partitionBy: ["transaction_date"]
+      options:
+        overwriteSchema: "true"
+        mergeSchema: "true"
+
+  # Customer daily metrics (Gold layer)
+  - dataFrameName: daily_customer_metrics
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/curated/customer_daily_metrics/"
+      format: delta
+      mode: append
+      partitionBy: ["transaction_date"]
+      options:
+        mergeSchema: "true"
+
+  # Product daily metrics (Gold layer)
+  - dataFrameName: daily_product_metrics
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/curated/product_daily_metrics/"
+      format: delta
+      mode: append
+      partitionBy: ["transaction_date", "category_department"]
+      options:
+        mergeSchema: "true"
+
+  # Business KPIs (Gold layer)
+  - dataFrameName: daily_business_kpis
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/curated/business_kpis/"
+      format: delta
+      mode: append
+      partitionBy: ["transaction_date"]
+      options:
+        mergeSchema: "true"
+
+  # Export to data warehouse (optional)
+  - dataFrameName: daily_business_kpis
+    outputType: jdbc
+    outputOptions:
+      url: "jdbc:postgresql://dwh.example.com:5432/analytics"
+      dbtable: "public.daily_business_metrics"
+      user: "${DWH_USER}"
+      password: "${DWH_PASSWORD}"
+      driver: "org.postgresql.Driver"
+      mode: append
+    condition: "${environment} == 'prod'"
+
+# Spark configuration optimizations
+spark:
+  executor:
+    memory: "4g"
+    cores: 2
+    instances: 10
+  sql:
+    adaptive:
+      enabled: true
+      coalescePartitions:
+        enabled: true
+      skewJoin:
+        enabled: true
+    statistics:
+      histogram:
+        enabled: true
+  serializer: "org.apache.spark.serializer.KryoSerializer"
+  
+# Optional: streaming configuration for real-time processing
+streaming:
+  triggerMode: "ProcessingTime"
+  triggerDuration: "5 minutes"
+  checkpointLocation: "s3a://${s3_bucket}/checkpoints/ecommerce_etl/"
