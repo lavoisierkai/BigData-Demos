@@ -1,0 +1,370 @@
+apiVersion: sparkoperator.k8s.io/v1beta2
+kind: SparkApplication
+metadata:
+  name: ecommerce-etl-pipeline
+  namespace: data-platform
+  labels:
+    app: ecommerce-etl
+    version: "1.0"
+    environment: production
+  annotations:
+    monitoring.coreos.com/enable: "true"
+    monitoring.coreos.com/port: "4040"
+    monitoring.coreos.com/path: "/metrics/prometheus"
+spec:
+  type: Scala
+  mode: cluster
+  image: "your-account.dkr.ecr.us-west-2.amazonaws.com/spark:3.4.0-scala-2.12"
+  imagePullPolicy: IfNotPresent
+  mainClass: com.company.analytics.ECommerceETLPipeline
+  mainApplicationFile: "s3a://data-platform-artifacts/spark-jobs/ecommerce-etl-1.0.jar"
+  arguments:
+    - "--input-path=s3a://data-platform-raw/ecommerce/orders/"
+    - "--output-path=s3a://data-platform-processed/ecommerce/fact_orders/"
+    - "--checkpoint-location=s3a://data-platform-checkpoints/ecommerce-etl/"
+    - "--processing-date={{ds}}"
+    - "--environment=production"
+    - "--enable-delta-lake=true"
+    - "--enable-data-quality=true"
+    - "--notification-topic=arn:aws:sns:us-west-2:123456789012:data-pipeline-notifications"
+  
+  sparkVersion: "3.4.0"
+  restartPolicy:
+    type: OnFailure
+    onFailureRetries: 3
+    onFailureRetryInterval: 10
+    onSubmissionFailureRetries: 5
+    onSubmissionFailureRetryInterval: 20
+  
+  # Resource configuration with dynamic allocation
+  dynamicAllocation:
+    enabled: true
+    initialExecutors: 2
+    minExecutors: 1
+    maxExecutors: 20
+    targetExecutorsPerCore: 5
+  
+  driver:
+    cores: 2
+    coreLimit: "2000m"
+    memory: "4g"
+    memoryOverhead: "1g"
+    serviceAccount: spark-service-account
+    labels:
+      version: "3.4.0"
+      app: ecommerce-etl-driver
+      cost-center: data-engineering
+    annotations:
+      prometheus.io/scrape: "true"
+      prometheus.io/port: "4040"
+      prometheus.io/path: "/metrics/prometheus"
+    env:
+      - name: AWS_REGION
+        value: "us-west-2"
+      - name: SPARK_CONF_DIR
+        value: "/opt/spark/conf"
+      - name: JAVA_OPTS
+        value: "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+    envSecretKeyRefs:
+      DATABASE_PASSWORD:
+        name: postgres-credentials
+        key: password
+      API_KEY:
+        name: external-api-credentials
+        key: api-key
+    volumeMounts:
+      - name: spark-config
+        mountPath: /opt/spark/conf
+      - name: hadoop-config
+        mountPath: /etc/hadoop/conf
+      - name: tmp-volume
+        mountPath: /tmp
+    nodeSelector:
+      workload-type: compute-optimized
+      instance-type: c5.xlarge
+    tolerations:
+      - key: "spark-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+            - key: node.kubernetes.io/instance-type
+              operator: In
+              values: ["c5.xlarge", "c5.2xlarge", "c5.4xlarge"]
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 185
+      fsGroup: 185
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: "1"
+        memory: "4Gi"
+      limits:
+        cpu: "2"
+        memory: "5Gi"
+    
+  executor:
+    cores: 4
+    coreLimit: "4000m"
+    memory: "8g"
+    memoryOverhead: "2g"
+    instances: 5
+    labels:
+      version: "3.4.0"
+      app: ecommerce-etl-executor
+      cost-center: data-engineering
+    env:
+      - name: AWS_REGION
+        value: "us-west-2"
+      - name: JAVA_OPTS
+        value: "-XX:+UseG1GC -XX:+UnlockExperimentalVMOptions -XX:+UseCGroupMemoryLimitForHeap"
+    volumeMounts:
+      - name: spark-config
+        mountPath: /opt/spark/conf
+      - name: hadoop-config
+        mountPath: /etc/hadoop/conf
+      - name: tmp-volume
+        mountPath: /tmp
+    nodeSelector:
+      workload-type: memory-optimized
+      instance-type: r5.xlarge
+    tolerations:
+      - key: "spark-workload"
+        operator: "Equal"
+        value: "true"
+        effect: "NoSchedule"
+    affinity:
+      nodeAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          preference:
+            matchExpressions:
+            - key: node.kubernetes.io/instance-type
+              operator: In
+              values: ["r5.xlarge", "r5.2xlarge", "r5.4xlarge"]
+      podAntiAffinity:
+        preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            labelSelector:
+              matchExpressions:
+              - key: app
+                operator: In
+                values:
+                - ecommerce-etl-executor
+            topologyKey: kubernetes.io/hostname
+    securityContext:
+      runAsNonRoot: true
+      runAsUser: 185
+      fsGroup: 185
+      seccompProfile:
+        type: RuntimeDefault
+    resources:
+      requests:
+        cpu: "2"
+        memory: "8Gi"
+      limits:
+        cpu: "4"
+        memory: "10Gi"
+  
+  volumes:
+    - name: spark-config
+      configMap:
+        name: spark-config
+        defaultMode: 420
+    - name: hadoop-config
+      configMap:
+        name: hadoop-config
+        defaultMode: 420
+    - name: tmp-volume
+      emptyDir:
+        sizeLimit: "10Gi"
+  
+  # Spark configuration
+  sparkConf:
+    # Core Spark settings
+    "spark.app.name": "ECommerce ETL Pipeline"
+    "spark.sql.adaptive.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.enabled": "true"
+    "spark.sql.adaptive.coalescePartitions.minPartitionNum": "1"
+    "spark.sql.adaptive.coalescePartitions.initialPartitionNum": "200"
+    "spark.sql.adaptive.advisoryPartitionSizeInBytes": "128MB"
+    "spark.sql.adaptive.skewJoin.enabled": "true"
+    "spark.sql.adaptive.skewJoin.skewedPartitionFactor": "5"
+    "spark.sql.adaptive.skewJoin.skewedPartitionThresholdInBytes": "256MB"
+    
+    # Serialization and memory management
+    "spark.serializer": "org.apache.spark.serializer.KryoSerializer"
+    "spark.sql.execution.arrow.pyspark.enabled": "true"
+    "spark.sql.execution.arrow.maxRecordsPerBatch": "10000"
+    "spark.sql.columnVector.offheap.enabled": "true"
+    "spark.sql.inMemoryColumnarStorage.compressed": "true"
+    "spark.sql.inMemoryColumnarStorage.batchSize": "20000"
+    
+    # Shuffle and network optimization
+    "spark.sql.shuffle.partitions": "400"
+    "spark.shuffle.service.enabled": "false"
+    "spark.dynamicAllocation.shuffleTracking.enabled": "true"
+    "spark.network.timeout": "800s"
+    "spark.executor.heartbeatInterval": "60s"
+    "spark.sql.broadcastTimeout": "36000"
+    
+    # S3 and Delta Lake configuration
+    "spark.hadoop.fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "spark.hadoop.fs.s3a.aws.credentials.provider": "com.amazonaws.auth.WebIdentityTokenCredentialsProvider"
+    "spark.hadoop.fs.s3a.path.style.access": "true"
+    "spark.hadoop.fs.s3a.block.size": "134217728"
+    "spark.hadoop.fs.s3a.buffer.dir": "/tmp/s3a"
+    "spark.hadoop.fs.s3a.fast.upload": "true"
+    "spark.hadoop.fs.s3a.fast.upload.buffer": "array"
+    "spark.hadoop.fs.s3a.multipart.size": "104857600"
+    "spark.hadoop.fs.s3a.multipart.threshold": "134217728"
+    "spark.hadoop.fs.s3a.max.total.tasks": "20"
+    "spark.hadoop.fs.s3a.threads.max": "20"
+    
+    # Delta Lake configuration
+    "spark.sql.extensions": "io.delta.sql.DeltaSparkSessionExtension"
+    "spark.sql.catalog.spark_catalog": "org.apache.spark.sql.delta.catalog.DeltaCatalog"
+    "spark.databricks.delta.retentionDurationCheck.enabled": "false"
+    "spark.databricks.delta.schema.autoMerge.enabled": "true"
+    
+    # Monitoring and observability
+    "spark.ui.port": "4040"
+    "spark.metrics.conf.driver.source.jvm.class": "org.apache.spark.metrics.source.JvmSource"
+    "spark.metrics.conf.executor.source.jvm.class": "org.apache.spark.metrics.source.JvmSource"
+    "spark.eventLog.enabled": "true"
+    "spark.eventLog.dir": "s3a://data-platform-logs/spark-events/"
+    "spark.history.fs.logDirectory": "s3a://data-platform-logs/spark-events/"
+    "spark.sql.streaming.metricsEnabled": "true"
+    
+    # Performance tuning
+    "spark.executor.processTreeMetrics.enabled": "true"
+    "spark.stage.maxConsecutiveAttempts": "8"
+    "spark.kubernetes.executor.deleteOnTermination": "true"
+    "spark.kubernetes.driver.deleteOnTermination": "true"
+    "spark.kubernetes.executor.volumes.persistentVolumeClaim.tmp-pvc.options.claimName": "tmp-pvc"
+    "spark.kubernetes.executor.volumes.persistentVolumeClaim.tmp-pvc.mount.path": "/tmp"
+    "spark.kubernetes.executor.volumes.persistentVolumeClaim.tmp-pvc.mount.readOnly": "false"
+    
+    # Security settings
+    "spark.authenticate": "true"
+    "spark.network.crypto.enabled": "true"
+    "spark.io.encryption.enabled": "true"
+    "spark.ssl.enabled": "false"
+    
+    # Custom application settings
+    "spark.app.environment": "production"
+    "spark.app.processing.mode": "batch"
+    "spark.app.data.quality.enabled": "true"
+    "spark.app.lineage.tracking.enabled": "true"
+    "spark.app.notification.enabled": "true"
+  
+  # Hadoop configuration for S3 access
+  hadoopConf:
+    "fs.s3a.impl": "org.apache.hadoop.fs.s3a.S3AFileSystem"
+    "fs.s3a.aws.credentials.provider": "com.amazonaws.auth.WebIdentityTokenCredentialsProvider"
+    "fs.s3a.path.style.access": "true"
+    "fs.s3a.connection.ssl.enabled": "true"
+    "fs.s3a.endpoint": "s3.us-west-2.amazonaws.com"
+    "fs.s3a.connection.timeout": "200000"
+    "fs.s3a.connection.establish.timeout": "40000"
+    "fs.s3a.connection.maximum": "200"
+    "fs.s3a.attempts.maximum": "20"
+    "fs.s3a.retry.limit": "7"
+    "fs.s3a.retry.interval": "500ms"
+    "fs.s3a.retry.throttle.limit": "20"
+    "fs.s3a.retry.throttle.interval": "1000ms"
+  
+  # Monitoring configuration
+  monitoring:
+    exposeDriverMetrics: true
+    exposeExecutorMetrics: true
+    prometheus:
+      jmxExporterJar: "/opt/spark/jars/jmx_prometheus_javaagent-0.17.2.jar"
+      port: 8090
+    metricsProperties: |
+      # Prometheus metrics configuration
+      *.sink.prometheusServlet.class=org.apache.spark.metrics.sink.PrometheusServlet
+      *.sink.prometheusServlet.path=/metrics/prometheus
+      driver.sink.prometheusServlet.class=org.apache.spark.metrics.sink.PrometheusServlet
+      driver.sink.prometheusServlet.path=/metrics/prometheus
+      executor.sink.prometheusServlet.class=org.apache.spark.metrics.sink.PrometheusServlet
+      executor.sink.prometheusServlet.path=/metrics/prometheus
+      
+      # JVM metrics
+      driver.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+      executor.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+      
+      # Custom application metrics
+      driver.source.application.class=com.company.analytics.metrics.ApplicationMetricsSource
+      executor.source.application.class=com.company.analytics.metrics.ApplicationMetricsSource
+  
+  # Dependencies
+  deps:
+    jars:
+      - "s3a://data-platform-artifacts/libs/delta-core_2.12-2.4.0.jar"
+      - "s3a://data-platform-artifacts/libs/hadoop-aws-3.3.4.jar"
+      - "s3a://data-platform-artifacts/libs/aws-java-sdk-bundle-1.12.367.jar"
+      - "s3a://data-platform-artifacts/libs/postgresql-42.6.0.jar"
+      - "s3a://data-platform-artifacts/libs/spark-sql-kafka-0-10_2.12-3.4.0.jar"
+      - "s3a://data-platform-artifacts/libs/great-expectations-spark-3.4.0.jar"
+    packages:
+      - "io.delta:delta-core_2.12:2.4.0"
+      - "org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.0"
+      - "org.postgresql:postgresql:42.6.0"
+    excludePackages:
+      - "org.apache.hadoop:hadoop-client"
+    repositories:
+      - "https://repo1.maven.org/maven2"
+      - "https://repository.cloudera.com/artifactory/cloudera-repos"
+  
+  # Time and retry settings
+  timeToLiveSeconds: 86400  # 24 hours
+  batchSchedulerOptions:
+    queue: "data-engineering"
+    priorityClassName: "high-priority"
+  
+  # Node selection and scheduling
+  nodeSelector:
+    workload-type: data-processing
+    availability-zone: us-west-2a
+  
+  tolerations:
+    - key: "data-workload"
+      operator: "Equal"
+      value: "spark"
+      effect: "NoSchedule"
+    - key: "spot-instance"
+      operator: "Equal"
+      value: "true"
+      effect: "NoSchedule"
+  
+  affinity:
+    nodeAffinity:
+      requiredDuringSchedulingIgnoredDuringExecution:
+        nodeSelectorTerms:
+        - matchExpressions:
+          - key: kubernetes.io/arch
+            operator: In
+            values:
+            - amd64
+      preferredDuringSchedulingIgnoredDuringExecution:
+      - weight: 100
+        preference:
+          matchExpressions:
+          - key: node.kubernetes.io/instance-type
+            operator: In
+            values: ["c5.2xlarge", "c5.4xlarge", "r5.2xlarge", "r5.4xlarge"]
+      - weight: 50
+        preference:
+          matchExpressions:
+          - key: topology.kubernetes.io/zone
+            operator: In
+            values: ["us-west-2a", "us-west-2b"]
