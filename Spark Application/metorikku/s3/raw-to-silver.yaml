@@ -1,0 +1,605 @@
+# Metorikku Data Lake Processing: Raw to Silver Layer
+# =================================================
+#
+# This configuration demonstrates data lake processing patterns using Metorikku
+# for transforming raw data (Bronze layer) into clean, validated data (Silver layer).
+# It implements the medallion architecture with comprehensive data quality controls.
+#
+# Data Flow:
+# Raw Data (Bronze) → Validation → Cleansing → Standardization → Silver Layer
+
+# Global configuration
+applicationName: "DataLakeRawToSilverPipeline"
+showPreviewLines: 15
+logLevel: "INFO"
+
+# Variable definitions
+variables:
+  processing_date: "2024-01-15"
+  environment: "dev"
+  s3_bucket: "data-lake-demo"
+  region: "us-west-2"
+  checkpoint_location: "s3a://${s3_bucket}/checkpoints/raw_to_silver/"
+  max_files_per_trigger: 1000
+
+# Input data sources from Bronze layer
+inputs:
+  # Raw customer data from multiple file formats
+  - name: raw_customers_csv
+    path: "s3a://${s3_bucket}/raw/customers/csv/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/"
+    format: csv
+    options:
+      header: "true"
+      inferSchema: "true"
+      multiLine: "true"
+      escape: "\""
+      timestampFormat: "yyyy-MM-dd HH:mm:ss"
+
+  - name: raw_customers_json
+    path: "s3a://${s3_bucket}/raw/customers/json/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/"
+    format: json
+    options:
+      multiLine: "true"
+      timestampFormat: "yyyy-MM-dd'T'HH:mm:ss.SSS'Z'"
+
+  # Raw transaction data from various sources
+  - name: raw_transactions_parquet
+    path: "s3a://${s3_bucket}/raw/transactions/parquet/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/"
+    format: parquet
+    options:
+      mergeSchema: "true"
+
+  - name: raw_transactions_avro
+    path: "s3a://${s3_bucket}/raw/transactions/avro/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/"
+    format: avro
+
+  # Product catalog from reference data
+  - name: raw_products
+    path: "s3a://${s3_bucket}/raw/products/year=${processing_date|dateFormat('yyyy')}/"
+    format: delta
+    options:
+      versionAsOf: "latest"
+
+  # User behavior events from streaming ingestion
+  - name: raw_events
+    path: "s3a://${s3_bucket}/raw/events/year=${processing_date|dateFormat('yyyy')}/month=${processing_date|dateFormat('MM')}/day=${processing_date|dateFormat('dd')}/"
+    format: json
+    options:
+      multiLine: "false"
+
+  # Data quality rules configuration
+  - name: quality_rules
+    path: "s3a://${s3_bucket}/config/data_quality_rules.json"
+    format: json
+    options:
+      multiLine: "true"
+
+  # Schema registry for validation
+  - name: schema_definitions
+    path: "s3a://${s3_bucket}/schemas/"
+    format: json
+    options:
+      multiLine: "true"
+      recursiveFileLookup: "true"
+
+# ETL transformation steps
+steps:
+  # Step 1: Standardize customer data from multiple sources
+  - dataFrameName: standardized_customers_csv
+    sql: |
+      SELECT 
+        CAST(customer_id AS STRING) as customer_id,
+        'CSV' as source_format,
+        TRIM(first_name) as first_name,
+        TRIM(last_name) as last_name,
+        TRIM(LOWER(email)) as email,
+        REGEXP_REPLACE(phone, '[^0-9+\\-\\s\\(\\)]', '') as phone,
+        CAST(age AS INT) as age,
+        UPPER(TRIM(gender)) as gender,
+        TRIM(address) as address,
+        TRIM(city) as city,
+        UPPER(TRIM(state)) as state,
+        TRIM(country) as country,
+        CAST(registration_date AS DATE) as registration_date,
+        CASE 
+          WHEN UPPER(status) IN ('ACTIVE', 'INACTIVE', 'SUSPENDED') THEN UPPER(status)
+          ELSE 'UNKNOWN'
+        END as status,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        input_file_name() as source_file
+      FROM raw_customers_csv
+      WHERE customer_id IS NOT NULL
+
+  - dataFrameName: standardized_customers_json
+    sql: |
+      SELECT 
+        CAST(id AS STRING) as customer_id,
+        'JSON' as source_format,
+        TRIM(personal_info.first_name) as first_name,
+        TRIM(personal_info.last_name) as last_name,
+        TRIM(LOWER(contact.email)) as email,
+        REGEXP_REPLACE(contact.phone, '[^0-9+\\-\\s\\(\\)]', '') as phone,
+        CAST(personal_info.age AS INT) as age,
+        UPPER(TRIM(personal_info.gender)) as gender,
+        TRIM(address.street) as address,
+        TRIM(address.city) as city,
+        UPPER(TRIM(address.state)) as state,
+        TRIM(address.country) as country,
+        CAST(metadata.created_at AS DATE) as registration_date,
+        CASE 
+          WHEN UPPER(status) IN ('ACTIVE', 'INACTIVE', 'SUSPENDED') THEN UPPER(status)
+          ELSE 'UNKNOWN'
+        END as status,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        input_file_name() as source_file
+      FROM raw_customers_json
+      WHERE id IS NOT NULL
+
+  # Step 2: Union and deduplicate customer data
+  - dataFrameName: unified_customers
+    sql: |
+      WITH all_customers AS (
+        SELECT * FROM standardized_customers_csv
+        UNION ALL
+        SELECT * FROM standardized_customers_json
+      ),
+      deduplicated AS (
+        SELECT *,
+          ROW_NUMBER() OVER (
+            PARTITION BY customer_id 
+            ORDER BY 
+              CASE source_format WHEN 'JSON' THEN 1 WHEN 'CSV' THEN 2 ELSE 3 END,
+              ingestion_timestamp DESC
+          ) as row_num
+        FROM all_customers
+      )
+      SELECT 
+        customer_id,
+        source_format,
+        first_name,
+        last_name,
+        email,
+        phone,
+        age,
+        gender,
+        address,
+        city,
+        state,
+        country,
+        registration_date,
+        status,
+        ingestion_timestamp,
+        processing_date,
+        source_file
+      FROM deduplicated
+      WHERE row_num = 1
+
+  # Step 3: Standardize transaction data from multiple formats
+  - dataFrameName: standardized_transactions_parquet
+    sql: |
+      SELECT 
+        CAST(transaction_id AS STRING) as transaction_id,
+        CAST(customer_id AS STRING) as customer_id,
+        CAST(product_id AS STRING) as product_id,
+        'PARQUET' as source_format,
+        CAST(amount AS DECIMAL(12,2)) as amount,
+        CAST(quantity AS INT) as quantity,
+        CAST(transaction_timestamp AS TIMESTAMP) as transaction_timestamp,
+        DATE(transaction_timestamp) as transaction_date,
+        TRIM(payment_method) as payment_method,
+        TRIM(channel) as channel,
+        TRIM(currency) as currency,
+        CAST(discount_amount AS DECIMAL(12,2)) as discount_amount,
+        TRIM(promo_code) as promo_code,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        input_file_name() as source_file
+      FROM raw_transactions_parquet
+      WHERE transaction_id IS NOT NULL 
+        AND amount > 0
+
+  - dataFrameName: standardized_transactions_avro
+    sql: |
+      SELECT 
+        CAST(txn_id AS STRING) as transaction_id,
+        CAST(cust_id AS STRING) as customer_id,
+        CAST(prod_id AS STRING) as product_id,
+        'AVRO' as source_format,
+        CAST(txn_amount AS DECIMAL(12,2)) as amount,
+        CAST(qty AS INT) as quantity,
+        CAST(txn_ts AS TIMESTAMP) as transaction_timestamp,
+        DATE(txn_ts) as transaction_date,
+        TRIM(payment_type) as payment_method,
+        TRIM(sales_channel) as channel,
+        TRIM(currency_code) as currency,
+        CAST(discount AS DECIMAL(12,2)) as discount_amount,
+        TRIM(promotion_code) as promo_code,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        input_file_name() as source_file
+      FROM raw_transactions_avro
+      WHERE txn_id IS NOT NULL 
+        AND txn_amount > 0
+
+  # Step 4: Union and validate transaction data
+  - dataFrameName: unified_transactions
+    sql: |
+      WITH all_transactions AS (
+        SELECT * FROM standardized_transactions_parquet
+        UNION ALL
+        SELECT * FROM standardized_transactions_avro
+      ),
+      validated_transactions AS (
+        SELECT *,
+          -- Data quality flags
+          CASE 
+            WHEN amount BETWEEN 0.01 AND 10000 THEN TRUE 
+            ELSE FALSE 
+          END as valid_amount,
+          CASE 
+            WHEN quantity BETWEEN 1 AND 100 THEN TRUE 
+            ELSE FALSE 
+          END as valid_quantity,
+          CASE 
+            WHEN transaction_timestamp IS NOT NULL 
+             AND transaction_timestamp >= '2020-01-01' 
+             AND transaction_timestamp <= current_timestamp() THEN TRUE 
+            ELSE FALSE 
+          END as valid_timestamp,
+          CASE 
+            WHEN payment_method IN ('CREDIT_CARD', 'DEBIT_CARD', 'PAYPAL', 'BANK_TRANSFER', 'CASH') THEN TRUE 
+            ELSE FALSE 
+          END as valid_payment_method
+        FROM all_transactions
+      )
+      SELECT 
+        transaction_id,
+        customer_id,
+        product_id,
+        source_format,
+        amount,
+        quantity,
+        transaction_timestamp,
+        transaction_date,
+        payment_method,
+        channel,
+        currency,
+        discount_amount,
+        promo_code,
+        ingestion_timestamp,
+        processing_date,
+        source_file,
+        -- Overall data quality score
+        (CAST(valid_amount AS INT) + 
+         CAST(valid_quantity AS INT) + 
+         CAST(valid_timestamp AS INT) + 
+         CAST(valid_payment_method AS INT)) / 4.0 * 100 as data_quality_score,
+        -- Quality flags for monitoring
+        STRUCT(
+          valid_amount,
+          valid_quantity, 
+          valid_timestamp,
+          valid_payment_method
+        ) as quality_checks
+      FROM validated_transactions
+      -- Only include records that pass basic validation
+      WHERE valid_amount AND valid_quantity AND valid_timestamp
+
+  # Step 5: Clean and validate product data
+  - dataFrameName: validated_products
+    sql: |
+      SELECT 
+        CAST(product_id AS STRING) as product_id,
+        TRIM(product_name) as product_name,
+        TRIM(brand) as brand,
+        TRIM(category) as category,
+        TRIM(subcategory) as subcategory,
+        CAST(unit_price AS DECIMAL(12,2)) as unit_price,
+        CAST(cost_price AS DECIMAL(12,2)) as cost_price,
+        TRIM(sku) as sku,
+        CAST(weight AS DECIMAL(8,2)) as weight,
+        TRIM(dimensions) as dimensions,
+        UPPER(TRIM(status)) as status,
+        CAST(created_date AS DATE) as created_date,
+        CAST(last_updated AS TIMESTAMP) as last_updated,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        -- Calculate profit margin
+        CASE 
+          WHEN unit_price > 0 AND cost_price > 0 
+          THEN ROUND(((unit_price - cost_price) / unit_price) * 100, 2)
+          ELSE NULL
+        END as profit_margin_pct,
+        -- Product tier based on price
+        CASE 
+          WHEN unit_price >= 500 THEN 'Premium'
+          WHEN unit_price >= 100 THEN 'Mid-range'
+          WHEN unit_price >= 20 THEN 'Budget'
+          ELSE 'Economy'
+        END as price_tier
+      FROM raw_products
+      WHERE product_id IS NOT NULL
+        AND unit_price > 0
+        AND status = 'ACTIVE'
+
+  # Step 6: Process user behavior events
+  - dataFrameName: processed_events
+    sql: |
+      SELECT 
+        CAST(event_id AS STRING) as event_id,
+        CAST(user_id AS STRING) as user_id,
+        CAST(session_id AS STRING) as session_id,
+        TRIM(event_type) as event_type,
+        CAST(event_timestamp AS TIMESTAMP) as event_timestamp,
+        DATE(event_timestamp) as event_date,
+        TRIM(page_url) as page_url,
+        TRIM(referrer) as referrer,
+        TRIM(user_agent) as user_agent,
+        TRIM(ip_address) as ip_address,
+        -- Parse event properties
+        CASE 
+          WHEN properties.product_id IS NOT NULL 
+          THEN CAST(properties.product_id AS STRING) 
+          ELSE NULL 
+        END as product_id,
+        CASE 
+          WHEN properties.category IS NOT NULL 
+          THEN TRIM(properties.category) 
+          ELSE NULL 
+        END as category,
+        CASE 
+          WHEN properties.value IS NOT NULL 
+          THEN CAST(properties.value AS DECIMAL(12,2)) 
+          ELSE NULL 
+        END as event_value,
+        -- Device information
+        CASE 
+          WHEN user_agent LIKE '%Mobile%' THEN 'Mobile'
+          WHEN user_agent LIKE '%Tablet%' THEN 'Tablet'
+          ELSE 'Desktop'
+        END as device_type,
+        -- Time-based features
+        HOUR(event_timestamp) as event_hour,
+        DAYOFWEEK(event_timestamp) as day_of_week,
+        CASE 
+          WHEN DAYOFWEEK(event_timestamp) IN (1, 7) THEN 'Weekend'
+          ELSE 'Weekday'
+        END as day_type,
+        current_timestamp() as ingestion_timestamp,
+        '${processing_date}' as processing_date,
+        input_file_name() as source_file
+      FROM raw_events
+      WHERE event_id IS NOT NULL
+        AND event_timestamp IS NOT NULL
+        AND event_type IS NOT NULL
+
+  # Step 7: Data quality assessment and scoring
+  - dataFrameName: data_quality_summary
+    sql: |
+      WITH customer_quality AS (
+        SELECT 
+          'customers' as table_name,
+          COUNT(*) as total_records,
+          COUNT(CASE WHEN email IS NOT NULL AND email LIKE '%@%.%' THEN 1 END) as valid_emails,
+          COUNT(CASE WHEN phone IS NOT NULL AND LENGTH(phone) >= 10 THEN 1 END) as valid_phones,
+          COUNT(CASE WHEN age BETWEEN 18 AND 120 THEN 1 END) as valid_ages,
+          AVG(CASE WHEN email IS NOT NULL AND email LIKE '%@%.%' THEN 1.0 ELSE 0.0 END) * 100 as email_completeness,
+          '${processing_date}' as processing_date
+        FROM unified_customers
+      ),
+      transaction_quality AS (
+        SELECT 
+          'transactions' as table_name,
+          COUNT(*) as total_records,
+          COUNT(CASE WHEN data_quality_score >= 90 THEN 1 END) as high_quality_records,
+          COUNT(CASE WHEN data_quality_score >= 70 THEN 1 END) as medium_quality_records,
+          COUNT(CASE WHEN data_quality_score < 70 THEN 1 END) as low_quality_records,
+          AVG(data_quality_score) as avg_quality_score,
+          '${processing_date}' as processing_date
+        FROM unified_transactions
+      ),
+      event_quality AS (
+        SELECT 
+          'events' as table_name,
+          COUNT(*) as total_records,
+          COUNT(CASE WHEN user_id IS NOT NULL THEN 1 END) as records_with_user_id,
+          COUNT(CASE WHEN product_id IS NOT NULL THEN 1 END) as records_with_product_id,
+          COUNT(DISTINCT session_id) as unique_sessions,
+          COUNT(DISTINCT user_id) as unique_users,
+          '${processing_date}' as processing_date
+        FROM processed_events
+      )
+      SELECT 
+        table_name,
+        total_records,
+        COALESCE(valid_emails, high_quality_records, records_with_user_id) as quality_metric_1,
+        COALESCE(valid_phones, medium_quality_records, records_with_product_id) as quality_metric_2,
+        COALESCE(valid_ages, low_quality_records, unique_sessions) as quality_metric_3,
+        COALESCE(email_completeness, avg_quality_score, unique_users) as quality_score,
+        processing_date,
+        current_timestamp() as assessment_timestamp
+      FROM customer_quality
+      UNION ALL
+      SELECT 
+        table_name, total_records, high_quality_records, medium_quality_records, 
+        low_quality_records, avg_quality_score, processing_date, current_timestamp()
+      FROM transaction_quality
+      UNION ALL
+      SELECT 
+        table_name, total_records, records_with_user_id, records_with_product_id,
+        unique_sessions, unique_users, processing_date, current_timestamp()
+      FROM event_quality
+
+# Data quality checks
+dataQuality:
+  - dataFrameName: unified_customers
+    checks:
+      - type: not_null
+        column: customer_id
+        description: "Customer ID must not be null"
+      - type: unique
+        column: customer_id
+        description: "Customer ID must be unique"
+      - type: regex
+        column: email
+        pattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        description: "Email must be valid format"
+      - type: range
+        column: age
+        min: 18
+        max: 120
+        description: "Age must be between 18 and 120"
+
+  - dataFrameName: unified_transactions
+    checks:
+      - type: not_null
+        column: transaction_id
+        description: "Transaction ID must not be null"
+      - type: unique
+        column: transaction_id
+        description: "Transaction ID must be unique"
+      - type: range
+        column: amount
+        min: 0.01
+        max: 10000
+        description: "Amount must be between $0.01 and $10,000"
+      - type: range
+        column: data_quality_score
+        min: 50
+        description: "Data quality score must be at least 50%"
+
+  - dataFrameName: validated_products
+    checks:
+      - type: not_null
+        column: product_id
+        description: "Product ID must not be null"
+      - type: not_null
+        column: product_name
+        description: "Product name must not be null"
+      - type: range
+        column: unit_price
+        min: 0.01
+        description: "Unit price must be positive"
+
+# Custom metrics for monitoring
+metrics:
+  - name: total_customers_processed
+    dataFrameName: unified_customers
+    aggregation: count
+    description: "Total number of customers processed"
+
+  - name: total_transactions_processed
+    dataFrameName: unified_transactions
+    aggregation: count
+    description: "Total number of transactions processed"
+
+  - name: avg_transaction_quality_score
+    dataFrameName: unified_transactions
+    aggregation: avg
+    column: data_quality_score
+    description: "Average transaction data quality score"
+
+  - name: total_revenue_processed
+    dataFrameName: unified_transactions
+    aggregation: sum
+    column: amount
+    description: "Total transaction value processed"
+
+  - name: events_processed
+    dataFrameName: processed_events
+    aggregation: count
+    description: "Total number of events processed"
+
+# Output configurations to Silver layer
+outputs:
+  # Clean customer data (Silver layer)
+  - dataFrameName: unified_customers
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/silver/customers/"
+      format: delta
+      mode: overwrite
+      partitionBy: ["processing_date"]
+      options:
+        overwriteSchema: "true"
+        mergeSchema: "true"
+
+  # Clean transaction data (Silver layer)
+  - dataFrameName: unified_transactions
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/silver/transactions/"
+      format: delta
+      mode: append
+      partitionBy: ["transaction_date"]
+      options:
+        mergeSchema: "true"
+
+  # Validated product data (Silver layer)
+  - dataFrameName: validated_products
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/silver/products/"
+      format: delta
+      mode: overwrite
+      options:
+        overwriteSchema: "true"
+
+  # Processed events (Silver layer)
+  - dataFrameName: processed_events
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/silver/events/"
+      format: delta
+      mode: append
+      partitionBy: ["event_date", "event_type"]
+      options:
+        mergeSchema: "true"
+
+  # Data quality metrics for monitoring
+  - dataFrameName: data_quality_summary
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/monitoring/data_quality/"
+      format: parquet
+      mode: append
+      partitionBy: ["processing_date"]
+
+  # High-quality data subset for real-time analytics
+  - dataFrameName: unified_transactions
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/silver/transactions_high_quality/"
+      format: delta
+      mode: append
+      partitionBy: ["transaction_date"]
+      filter: "data_quality_score >= 90"
+      options:
+        mergeSchema: "true"
+
+# Spark configuration for optimal performance
+spark:
+  executor:
+    memory: "8g"
+    cores: 4
+    instances: 20
+  sql:
+    adaptive:
+      enabled: true
+      coalescePartitions:
+        enabled: true
+      skewJoin:
+        enabled: true
+    statistics:
+      histogram:
+        enabled: true
+  serializer: "org.apache.spark.serializer.KryoSerializer"
+  
+# Streaming configuration (for real-time processing)
+streaming:
+  triggerMode: "ProcessingTime"
+  triggerDuration: "10 minutes"
+  checkpointLocation: "${checkpoint_location}"
+  maxFilesPerTrigger: "${max_files_per_trigger}"

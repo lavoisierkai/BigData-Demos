@@ -1,0 +1,214 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: 'Modern Data Lake Architecture with S3, Glue, EMR, and Athena'
+
+Parameters:
+  ProjectName:
+    Type: String
+    Default: data-lake-demo
+    Description: Project name for resource naming
+  
+  Environment:
+    Type: String
+    Default: dev
+    AllowedValues: [dev, staging, prod]
+    Description: Environment name
+
+Resources:
+  # S3 Buckets for Data Lake Layers
+  RawDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-raw-data-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      LifecycleConfiguration:
+        Rules:
+          - Id: ArchiveOldVersions
+            Status: Enabled
+            Transitions:
+              - StorageClass: STANDARD_IA
+                TransitionInDays: 30
+              - StorageClass: GLACIER
+                TransitionInDays: 90
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ProcessedDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-processed-data-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  CuratedDataBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-curated-data-${Environment}-${AWS::AccountId}'
+      VersioningConfiguration:
+        Status: Enabled
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  ScriptsBucket:
+    Type: AWS::S3::Bucket
+    Properties:
+      BucketName: !Sub '${ProjectName}-scripts-${Environment}-${AWS::AccountId}'
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  # IAM Roles and Policies
+  GlueServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-glue-service-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: glue.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AWSGlueServiceRole
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${RawDataBucket}/*'
+                  - !Sub '${ProcessedDataBucket}/*'
+                  - !Sub '${CuratedDataBucket}/*'
+                  - !Sub '${ScriptsBucket}/*'
+                  - !GetAtt RawDataBucket.Arn
+                  - !GetAtt ProcessedDataBucket.Arn
+                  - !GetAtt CuratedDataBucket.Arn
+                  - !GetAtt ScriptsBucket.Arn
+
+  EMRServiceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-emr-service-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: elasticmapreduce.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceRole
+
+  EMRInstanceProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      InstanceProfileName: !Sub '${ProjectName}-emr-instance-profile-${Environment}'
+      Roles:
+        - !Ref EMRECRole
+
+  EMRECRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Sub '${ProjectName}-emr-ec2-role-${Environment}'
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/service-role/AmazonElasticMapReduceforEC2Role
+      Policies:
+        - PolicyName: S3Access
+          PolicyDocument:
+            Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action:
+                  - s3:GetObject
+                  - s3:PutObject
+                  - s3:DeleteObject
+                  - s3:ListBucket
+                Resource:
+                  - !Sub '${RawDataBucket}/*'
+                  - !Sub '${ProcessedDataBucket}/*'
+                  - !Sub '${CuratedDataBucket}/*'
+                  - !Sub '${ScriptsBucket}/*'
+                  - !GetAtt RawDataBucket.Arn
+                  - !GetAtt ProcessedDataBucket.Arn
+                  - !GetAtt CuratedDataBucket.Arn
+                  - !GetAtt ScriptsBucket.Arn
+
+  # Glue Database
+  GlueDatabase:
+    Type: AWS::Glue::Database
+    Properties:
+      CatalogId: !Ref AWS::AccountId
+      DatabaseInput:
+        Name: !Sub '${ProjectName}_catalog_${Environment}'
+        Description: 'Data catalog for data lake'
+
+  # Athena Workgroup
+  AthenaWorkGroup:
+    Type: AWS::Athena::WorkGroup
+    Properties:
+      Name: !Sub '${ProjectName}-workgroup-${Environment}'
+      Description: 'Workgroup for data lake queries'
+      State: ENABLED
+      WorkGroupConfiguration:
+        ResultConfiguration:
+          OutputLocation: !Sub 's3://${ProcessedDataBucket}/athena-results/'
+        EnforceWorkGroupConfiguration: true
+        PublishCloudWatchMetrics: true
+
+Outputs:
+  RawDataBucketName:
+    Description: 'S3 bucket for raw data'
+    Value: !Ref RawDataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-RawDataBucket'
+
+  ProcessedDataBucketName:
+    Description: 'S3 bucket for processed data'
+    Value: !Ref ProcessedDataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-ProcessedDataBucket'
+
+  CuratedDataBucketName:
+    Description: 'S3 bucket for curated data'
+    Value: !Ref CuratedDataBucket
+    Export:
+      Name: !Sub '${AWS::StackName}-CuratedDataBucket'
+
+  GlueServiceRoleArn:
+    Description: 'Glue service role ARN'
+    Value: !GetAtt GlueServiceRole.Arn
+    Export:
+      Name: !Sub '${AWS::StackName}-GlueServiceRole'
+
+  GlueDatabaseName:
+    Description: 'Glue database name'
+    Value: !Ref GlueDatabase
+    Export:
+      Name: !Sub '${AWS::StackName}-GlueDatabase'

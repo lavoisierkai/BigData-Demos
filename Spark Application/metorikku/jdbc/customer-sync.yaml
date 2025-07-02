@@ -1,0 +1,536 @@
+# Metorikku Customer Data Synchronization Pipeline
+# ===============================================
+#
+# This configuration demonstrates JDBC-based data synchronization patterns
+# using Metorikku. It processes customer data from multiple database sources,
+# performs data quality checks, and creates a unified customer view.
+#
+# Data Flow:
+# Source DBs → Data Extraction → Validation → Deduplication → Master Data → Output
+
+# Global configuration
+applicationName: "CustomerDataSyncPipeline"
+showPreviewLines: 10
+logLevel: "INFO"
+
+# Variable definitions
+variables:
+  sync_date: "2024-01-15"
+  environment: "dev"
+  crm_db_url: "jdbc:postgresql://crm-db.example.com:5432/crm"
+  erp_db_url: "jdbc:postgresql://erp-db.example.com:5432/erp"
+  ecommerce_db_url: "jdbc:mysql://ecommerce-db.example.com:3306/store"
+  s3_bucket: "data-lake-demo"
+  batch_size: 10000
+  parallelism: 4
+
+# Input data sources
+inputs:
+  # CRM system customers
+  - name: crm_customers
+    jdbcOptions:
+      url: "${crm_db_url}"
+      dbtable: |
+        (SELECT 
+          customer_id,
+          'CRM' as source_system,
+          first_name,
+          last_name,
+          email,
+          phone,
+          date_of_birth,
+          gender,
+          registration_date,
+          last_contact_date,
+          customer_status,
+          lead_source,
+          assigned_sales_rep,
+          created_at,
+          updated_at
+        FROM customers 
+        WHERE updated_at >= '${sync_date}'::date - INTERVAL '7 days'
+        ) as crm_data
+      user: "${CRM_DB_USER}"
+      password: "${CRM_DB_PASSWORD}"
+      driver: "org.postgresql.Driver"
+      fetchsize: "${batch_size}"
+      numPartitions: "${parallelism}"
+      partitionColumn: "customer_id"
+      lowerBound: "1"
+      upperBound: "1000000"
+
+  # ERP system customers
+  - name: erp_customers
+    jdbcOptions:
+      url: "${erp_db_url}"
+      dbtable: |
+        (SELECT 
+          customer_code as customer_id,
+          'ERP' as source_system,
+          customer_name,
+          contact_email as email,
+          contact_phone as phone,
+          billing_address,
+          shipping_address,
+          payment_terms,
+          credit_limit,
+          account_manager,
+          company_name,
+          industry,
+          annual_revenue,
+          employee_count,
+          created_date,
+          last_modified_date as updated_at
+        FROM customer_accounts 
+        WHERE last_modified_date >= '${sync_date}'::date - INTERVAL '7 days'
+        ) as erp_data
+      user: "${ERP_DB_USER}"
+      password: "${ERP_DB_PASSWORD}"
+      driver: "org.postgresql.Driver"
+      fetchsize: "${batch_size}"
+      numPartitions: "${parallelism}"
+
+  # E-commerce platform customers
+  - name: ecommerce_customers
+    jdbcOptions:
+      url: "${ecommerce_db_url}"
+      dbtable: |
+        (SELECT 
+          id as customer_id,
+          'ECOMMERCE' as source_system,
+          first_name,
+          last_name,
+          email,
+          phone_number as phone,
+          birth_date as date_of_birth,
+          gender,
+          registration_ip,
+          last_login_at,
+          total_orders,
+          total_spent,
+          average_order_value,
+          preferred_language,
+          marketing_opt_in,
+          created_at,
+          updated_at
+        FROM users 
+        WHERE updated_at >= DATE_SUB('${sync_date}', INTERVAL 7 DAY)
+        ) as ecommerce_data
+      user: "${ECOMMERCE_DB_USER}"
+      password: "${ECOMMERCE_DB_PASSWORD}"
+      driver: "com.mysql.cj.jdbc.Driver"
+      fetchsize: "${batch_size}"
+      numPartitions: "${parallelism}"
+
+  # Existing master customer data for incremental processing
+  - name: existing_master_customers
+    path: "s3a://${s3_bucket}/master/customers/"
+    format: delta
+    options:
+      versionAsOf: "latest"
+
+  # Customer address data from external service
+  - name: address_validation_results
+    path: "s3a://${s3_bucket}/reference/validated_addresses/"
+    format: json
+    options:
+      multiLine: "true"
+
+# ETL transformation steps
+steps:
+  # Step 1: Standardize CRM customer data
+  - dataFrameName: standardized_crm_customers
+    sql: |
+      SELECT 
+        CAST(customer_id AS STRING) as customer_id,
+        source_system,
+        TRIM(UPPER(first_name)) as first_name,
+        TRIM(UPPER(last_name)) as last_name,
+        TRIM(LOWER(email)) as email,
+        REGEXP_REPLACE(phone, '[^0-9+]', '') as phone_cleaned,
+        date_of_birth,
+        UPPER(gender) as gender,
+        registration_date,
+        last_contact_date as last_activity_date,
+        customer_status,
+        lead_source,
+        assigned_sales_rep,
+        NULL as company_name,
+        NULL as industry,
+        NULL as total_orders,
+        NULL as total_spent,
+        created_at,
+        updated_at,
+        CURRENT_TIMESTAMP() as sync_timestamp
+      FROM crm_customers
+      WHERE email IS NOT NULL 
+        AND email LIKE '%@%.%'
+        AND LENGTH(email) > 5
+
+  # Step 2: Standardize ERP customer data
+  - dataFrameName: standardized_erp_customers
+    sql: |
+      SELECT 
+        CAST(customer_id AS STRING) as customer_id,
+        source_system,
+        -- Parse customer_name into first_name and last_name
+        CASE 
+          WHEN customer_name LIKE '%, %' THEN TRIM(UPPER(SPLIT(customer_name, ', ')[1]))
+          WHEN customer_name LIKE '% %' THEN TRIM(UPPER(SPLIT(customer_name, ' ')[0]))
+          ELSE TRIM(UPPER(customer_name))
+        END as first_name,
+        CASE 
+          WHEN customer_name LIKE '%, %' THEN TRIM(UPPER(SPLIT(customer_name, ', ')[0]))
+          WHEN customer_name LIKE '% %' THEN TRIM(UPPER(REGEXP_REPLACE(customer_name, '^\\w+\\s+', '')))
+          ELSE NULL
+        END as last_name,
+        TRIM(LOWER(email)) as email,
+        REGEXP_REPLACE(phone, '[^0-9+]', '') as phone_cleaned,
+        NULL as date_of_birth,
+        NULL as gender,
+        created_date as registration_date,
+        updated_at as last_activity_date,
+        'ACTIVE' as customer_status,
+        NULL as lead_source,
+        account_manager as assigned_sales_rep,
+        company_name,
+        industry,
+        NULL as total_orders,
+        annual_revenue as total_spent,
+        created_date as created_at,
+        updated_at,
+        CURRENT_TIMESTAMP() as sync_timestamp
+      FROM erp_customers
+      WHERE email IS NOT NULL 
+        AND email LIKE '%@%.%'
+
+  # Step 3: Standardize E-commerce customer data
+  - dataFrameName: standardized_ecommerce_customers
+    sql: |
+      SELECT 
+        CAST(customer_id AS STRING) as customer_id,
+        source_system,
+        TRIM(UPPER(first_name)) as first_name,
+        TRIM(UPPER(last_name)) as last_name,
+        TRIM(LOWER(email)) as email,
+        REGEXP_REPLACE(phone, '[^0-9+]', '') as phone_cleaned,
+        date_of_birth,
+        UPPER(gender) as gender,
+        created_at as registration_date,
+        last_login_at as last_activity_date,
+        CASE 
+          WHEN total_orders > 0 THEN 'ACTIVE'
+          ELSE 'INACTIVE'
+        END as customer_status,
+        'WEBSITE' as lead_source,
+        NULL as assigned_sales_rep,
+        NULL as company_name,
+        NULL as industry,
+        total_orders,
+        total_spent,
+        created_at,
+        updated_at,
+        CURRENT_TIMESTAMP() as sync_timestamp
+      FROM ecommerce_customers
+      WHERE email IS NOT NULL 
+        AND email LIKE '%@%.%'
+
+  # Step 4: Union all customer sources
+  - dataFrameName: all_customers_union
+    sql: |
+      SELECT * FROM standardized_crm_customers
+      UNION ALL
+      SELECT * FROM standardized_erp_customers
+      UNION ALL  
+      SELECT * FROM standardized_ecommerce_customers
+
+  # Step 5: Email-based deduplication and master record creation
+  - dataFrameName: deduplicated_customers
+    sql: |
+      WITH customer_priorities AS (
+        SELECT *,
+          CASE source_system
+            WHEN 'CRM' THEN 1
+            WHEN 'ERP' THEN 2  
+            WHEN 'ECOMMERCE' THEN 3
+            ELSE 99
+          END as source_priority,
+          ROW_NUMBER() OVER (
+            PARTITION BY email 
+            ORDER BY 
+              CASE source_system WHEN 'CRM' THEN 1 WHEN 'ERP' THEN 2 ELSE 3 END,
+              updated_at DESC,
+              created_at DESC
+          ) as row_num
+        FROM all_customers_union
+      ),
+      master_records AS (
+        SELECT 
+          email as master_key,
+          customer_id,
+          source_system as primary_source,
+          first_name,
+          last_name,
+          email,
+          phone_cleaned,
+          date_of_birth,
+          gender,
+          registration_date,
+          last_activity_date,
+          customer_status,
+          lead_source,
+          assigned_sales_rep,
+          company_name,
+          industry,
+          total_orders,
+          total_spent,
+          created_at,
+          updated_at,
+          sync_timestamp
+        FROM customer_priorities
+        WHERE row_num = 1
+      ),
+      enriched_records AS (
+        SELECT 
+          m.*,
+          -- Collect additional data from other sources
+          COLLECT_LIST(
+            CASE WHEN c.source_system != m.primary_source 
+                 THEN STRUCT(c.source_system, c.customer_id, c.updated_at)
+                 ELSE NULL END
+          ) as alternate_source_ids,
+          COUNT(CASE WHEN c.source_system != m.primary_source THEN 1 END) as source_count,
+          -- Data completeness score
+          (
+            CASE WHEN m.first_name IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN m.last_name IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN m.phone_cleaned IS NOT NULL AND LENGTH(m.phone_cleaned) >= 10 THEN 1 ELSE 0 END +
+            CASE WHEN m.date_of_birth IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN m.gender IS NOT NULL THEN 1 ELSE 0 END +
+            CASE WHEN m.company_name IS NOT NULL THEN 1 ELSE 0 END
+          ) / 6.0 * 100 as completeness_score
+        FROM master_records m
+        LEFT JOIN customer_priorities c ON m.email = c.email
+        GROUP BY 
+          m.master_key, m.customer_id, m.primary_source, m.first_name, m.last_name,
+          m.email, m.phone_cleaned, m.date_of_birth, m.gender, m.registration_date,
+          m.last_activity_date, m.customer_status, m.lead_source, m.assigned_sales_rep,
+          m.company_name, m.industry, m.total_orders, m.total_spent, m.created_at,
+          m.updated_at, m.sync_timestamp
+      )
+      SELECT 
+        ROW_NUMBER() OVER (ORDER BY updated_at DESC) as master_customer_id,
+        master_key,
+        customer_id as source_customer_id,
+        primary_source,
+        first_name,
+        last_name,
+        email,
+        phone_cleaned as phone,
+        date_of_birth,
+        gender,
+        registration_date,
+        last_activity_date,
+        customer_status,
+        lead_source,
+        assigned_sales_rep,
+        company_name,
+        industry,
+        COALESCE(total_orders, 0) as total_orders,
+        COALESCE(total_spent, 0.0) as total_spent,
+        alternate_source_ids,
+        source_count,
+        completeness_score,
+        created_at,
+        updated_at,
+        sync_timestamp
+      FROM enriched_records
+
+  # Step 6: Customer scoring and segmentation
+  - dataFrameName: scored_customers
+    sql: |
+      SELECT 
+        *,
+        -- Customer value scoring
+        CASE 
+          WHEN total_spent >= 5000 AND total_orders >= 20 THEN 'High Value'
+          WHEN total_spent >= 2000 AND total_orders >= 10 THEN 'Medium Value'
+          WHEN total_spent >= 500 AND total_orders >= 3 THEN 'Low Value'
+          WHEN total_orders > 0 THEN 'New Customer'
+          ELSE 'Prospect'
+        END as value_segment,
+        -- Engagement scoring
+        CASE 
+          WHEN DATEDIFF('${sync_date}', last_activity_date) <= 30 THEN 'Highly Engaged'
+          WHEN DATEDIFF('${sync_date}', last_activity_date) <= 90 THEN 'Moderately Engaged'
+          WHEN DATEDIFF('${sync_date}', last_activity_date) <= 180 THEN 'Low Engagement'
+          ELSE 'Dormant'
+        END as engagement_segment,
+        -- Data quality tier
+        CASE 
+          WHEN completeness_score >= 80 THEN 'Gold'
+          WHEN completeness_score >= 60 THEN 'Silver'
+          WHEN completeness_score >= 40 THEN 'Bronze'
+          ELSE 'Basic'
+        END as data_quality_tier,
+        -- Tenure analysis
+        CASE 
+          WHEN DATEDIFF('${sync_date}', registration_date) >= 365 THEN 'Veteran'
+          WHEN DATEDIFF('${sync_date}', registration_date) >= 180 THEN 'Established'
+          WHEN DATEDIFF('${sync_date}', registration_date) >= 30 THEN 'Recent'
+          ELSE 'New'
+        END as tenure_segment
+      FROM deduplicated_customers
+
+  # Step 7: Change detection (for existing customers)
+  - dataFrameName: customer_changes
+    sql: |
+      SELECT 
+        n.master_customer_id,
+        n.email,
+        'UPDATE' as change_type,
+        STRUCT(
+          CASE WHEN n.first_name != COALESCE(e.first_name, '') THEN 
+            STRUCT('first_name', COALESCE(e.first_name, 'NULL'), n.first_name) END,
+          CASE WHEN n.last_name != COALESCE(e.last_name, '') THEN 
+            STRUCT('last_name', COALESCE(e.last_name, 'NULL'), n.last_name) END,
+          CASE WHEN n.phone != COALESCE(e.phone, '') THEN 
+            STRUCT('phone', COALESCE(e.phone, 'NULL'), n.phone) END,
+          CASE WHEN n.customer_status != COALESCE(e.customer_status, '') THEN 
+            STRUCT('customer_status', COALESCE(e.customer_status, 'NULL'), n.customer_status) END
+        ) as field_changes,
+        n.sync_timestamp
+      FROM scored_customers n
+      LEFT JOIN existing_master_customers e ON n.email = e.email
+      WHERE e.email IS NOT NULL 
+        AND (
+          n.first_name != COALESCE(e.first_name, '') OR
+          n.last_name != COALESCE(e.last_name, '') OR
+          n.phone != COALESCE(e.phone, '') OR
+          n.customer_status != COALESCE(e.customer_status, '')
+        )
+      
+      UNION ALL
+      
+      SELECT 
+        n.master_customer_id,
+        n.email,
+        'INSERT' as change_type,
+        NULL as field_changes,
+        n.sync_timestamp
+      FROM scored_customers n
+      LEFT JOIN existing_master_customers e ON n.email = e.email
+      WHERE e.email IS NULL
+
+# Data quality checks
+dataQuality:
+  - dataFrameName: scored_customers
+    checks:
+      - type: not_null
+        column: email
+        description: "Email must not be null"
+      - type: unique
+        column: email
+        description: "Email must be unique in master data"
+      - type: regex
+        column: email
+        pattern: "^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\\.[a-zA-Z]{2,}$"
+        description: "Email must be valid format"
+      - type: range
+        column: completeness_score
+        min: 0
+        max: 100
+        description: "Completeness score must be between 0 and 100"
+
+  - dataFrameName: customer_changes
+    checks:
+      - type: not_null
+        column: change_type
+        description: "Change type must be specified"
+
+# Custom metrics
+metrics:
+  - name: customers_processed
+    dataFrameName: scored_customers
+    aggregation: count
+    description: "Total customers processed"
+
+  - name: high_value_customers
+    dataFrameName: scored_customers
+    aggregation: count
+    filter: "value_segment = 'High Value'"
+    description: "Number of high value customers"
+
+  - name: avg_completeness_score
+    dataFrameName: scored_customers
+    aggregation: avg
+    column: completeness_score
+    description: "Average data completeness score"
+
+  - name: duplicate_emails_resolved
+    dataFrameName: all_customers_union
+    aggregation: custom
+    sql: |
+      SELECT 
+        COUNT(*) - COUNT(DISTINCT email) as duplicates_resolved
+      FROM all_customers_union
+    description: "Number of duplicate email addresses resolved"
+
+# Output configurations
+outputs:
+  # Master customer data (Golden Record)
+  - dataFrameName: scored_customers
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/master/customers/"
+      format: delta
+      mode: overwrite
+      options:
+        overwriteSchema: "true"
+        mergeSchema: "true"
+
+  # Customer change log for audit trail
+  - dataFrameName: customer_changes
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/audit/customer_changes/date=${sync_date}/"
+      format: parquet
+      mode: overwrite
+
+  # Export to operational CRM database
+  - dataFrameName: scored_customers
+    outputType: jdbc
+    outputOptions:
+      url: "${crm_db_url}"
+      dbtable: "public.master_customers"
+      user: "${CRM_DB_USER}"
+      password: "${CRM_DB_PASSWORD}"
+      driver: "org.postgresql.Driver"
+      mode: overwrite
+      options:
+        createTableOptions: "PARTITION BY RANGE (DATE(updated_at))"
+        batchsize: "${batch_size}"
+    condition: "${environment} == 'prod'"
+
+  # Customer segments for marketing automation
+  - dataFrameName: scored_customers
+    outputType: file
+    outputOptions:
+      path: "s3a://${s3_bucket}/marketing/customer_segments/"
+      format: json
+      mode: overwrite
+      select: |
+        email, value_segment, engagement_segment, 
+        data_quality_tier, tenure_segment, total_spent, total_orders
+
+# Spark configuration
+spark:
+  executor:
+    memory: "6g"
+    cores: 3
+  sql:
+    adaptive:
+      enabled: true
+      coalescePartitions:
+        enabled: true
+    broadcastTimeout: "36000s"
